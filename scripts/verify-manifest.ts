@@ -10,6 +10,8 @@
  *   - a non-create POST is never described as creating a record
  *   - no description leaks an action verb into the resource label
  *     ("the retrieves the status")
+ *   - a bulk/batch endpoint is never listed as a "version sibling" of a
+ *     single-record one, and vice versa
  *
  * Run: npm test (tsx scripts/verify-manifest.ts)
  */
@@ -36,7 +38,10 @@ interface Entry {
   returnsCollection?: boolean;
   collectionEnvelope?: string;
   deprecated?: boolean;
+  versionSiblings?: Array<{ toolName: string; version: string }>;
 }
+
+const BULK_PATH_ACTION = /\/(bulk|batch)(_\w+)?$/;
 
 const LIST_NAME =
   /^(list|lists|index|get_all|gets_all|retrieve_all|retrieves_all|return_a_list|returns_a_list|show_all|shows_all|get_a_list|search)/;
@@ -55,6 +60,18 @@ function check(condition: boolean, message: string): void {
 
 const manifest: Entry[] = JSON.parse(readFileSync(MANIFEST, "utf8"));
 check(manifest.length > 2500, `manifest holds ${manifest.length} tools; expected > 2500`);
+
+const byToolName = new Map(manifest.map((e) => [e.toolName, e]));
+for (const e of manifest) {
+  for (const sib of e.versionSiblings || []) {
+    const peer = byToolName.get(sib.toolName);
+    if (!peer) continue;
+    check(
+      BULK_PATH_ACTION.test(e.path) === BULK_PATH_ACTION.test(peer.path),
+      `version-sibling pairing spans a bulk/single-record mismatch: ${e.toolName} <-> ${sib.toolName}`
+    );
+  }
+}
 
 const seen = new Set<string>();
 for (const e of manifest) {

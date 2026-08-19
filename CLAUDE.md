@@ -46,15 +46,25 @@ dimension, and no sentence may restate another:
 | `src/tools/behavior-builder.ts` | Return shape, side effects, failure modes |
 | `src/tools/param-descriptions.ts` | Per-parameter prose and source hints |
 | `src/tools/annotation-builder.ts` | Titles and MCP annotations |
+| `src/tools/version-sibling-note.ts` | Names cross-version sibling tools in the description |
 
 Pagination is advertised only when the endpoint genuinely returns a collection
-(`returnsCollection`), in both the description and the input schema. v2.x
-endpoints envelope their payload as `{ data: [...] }`, so the detector unwraps
-envelopes, and falls back to declared `page`/`per_page` params then the
-operation summary when the schema is ambiguous. The envelope key is recorded
-as `collectionEnvelope` and named in the behavior sentence.
+(`returnsCollection`), in both the description and the input schema.
+`schemaIsCollection` in `scripts/generate-catalog.ts` unwraps `{ data: [...] }`
+envelopes (and any single-property object wrapping an array, whatever it's
+named — Procore's v1.0 endpoints often envelope under the plural resource
+name, e.g. `{ exchange_rates: [...] }`) and merges `allOf` branches into one
+schema before judging it, rather than treating `allOf` like `oneOf` (an
+optional array-typed field on one branch doesn't make the *merged* object a
+list). When the schema itself asserts a single object, that verdict only
+flips on strong corroboration: a non-`{id}` path trusts either declared
+pagination or explicit list language in the summary/description; an
+`{id}`-shaped path requires *both*, since Procore sometimes declares
+`page`/`per_page` on a genuine show-by-id endpoint with no textual list
+signal behind it. The envelope key is recorded as `collectionEnvelope` and
+named in the behavior sentence.
 
-Two rules keep the prose honest, both enforced by `npm test`
+Three rules keep the prose honest, all enforced by `npm test`
 (`scripts/verify-manifest.ts`, which also runs in CI):
 
 - **Never claim semantics the name does not carry.** A POST named `reorder_*`
@@ -62,6 +72,15 @@ Two rules keep the prose honest, both enforced by `npm test`
   `bulk_*`/`sync_*` call is described in the plural.
 - **Name the right record.** The id closing a path is the *target*, not a
   "parent record"; non-identifier path params (`{new_status}`) are neither.
+- **Disambiguate cross-version siblings.** When Procore exposes the same
+  operation at two API versions under different paths (dedup can't merge
+  them — e.g. v1.1 moved weather logs under `daily_logs/`), each tool's
+  description names its sibling(s) rather than reading identically. Grouping
+  is by normalized summary text, guarded so a generic summary reused across
+  unrelated resources ("Create Attachment" on witness statements, checklist
+  lists, incidents, ...) doesn't get treated as one family, and so a
+  `bulk_*`/`batch_*` endpoint never gets paired with the single-record
+  version of the same summary.
 
 Name collisions are broken with meaning-bearing suffixes (scope, version,
 distinguishing path segment, HTTP method) before falling back to numbers.
