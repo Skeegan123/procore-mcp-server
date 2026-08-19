@@ -22,6 +22,7 @@ import {
   isBulkOperation,
   isIdentifierParam,
 } from "./purpose-builder.js";
+import { buildVersionSiblingNote } from "./version-sibling-note.js";
 
 interface ManifestEntry {
   toolName: string;
@@ -40,6 +41,7 @@ interface ManifestEntry {
   deprecated?: boolean;
   deprecatedAt?: string;
   sunset?: string;
+  versionSiblings?: Array<{ toolName: string; version: string }>;
 }
 
 const DESCRIPTION_MAX = 2048;
@@ -71,6 +73,10 @@ export function buildDescription(entry: ManifestEntry): string {
       ? ` (${entry.version})`
       : "";
   parts.push(`Procore API${versionPart}: ${entry.category} > ${entry.module}.`);
+
+  const siblingNote = buildVersionSiblingNote(entry);
+  if (siblingNote) parts.push(siblingNote);
+
   parts.push(`Endpoint: ${entry.method} ${entry.path}`);
 
   return parts.join(" ").slice(0, DESCRIPTION_MAX);

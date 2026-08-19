@@ -196,10 +196,45 @@ function schemaIsCollection(
       }
       return { kind: "ambiguous-envelope", envelope: key };
     }
+
+    // A schema with exactly one property is drawn purely to wrap that
+    // property — Procore's older v1.0 endpoints envelope under the plural
+    // resource name (`{ exchange_rates: [...] }`) rather than a generic
+    // `data`/`items` key, which the fixed allowlist above can't anticipate.
+    const propNames = Object.keys(props);
+    if (propNames.length === 1) {
+      const inner = schemaIsCollection(props[propNames[0]], depth + 1);
+      if (inner?.kind === "collection") {
+        return { kind: "collection", envelope: propNames[0] };
+      }
+    }
     return { kind: "single" };
   }
 
-  for (const key of ["oneOf", "anyOf", "allOf"] as const) {
+  // allOf composes by intersection -- the real response is the MERGE of every
+  // branch's properties, not "does any branch match" (that's what oneOf/anyOf
+  // mean). Treating them the same let one branch's incidental extra field
+  // decide the shape of the whole merged object: a TimecardEntry response
+  // allOf'd with `{ automatically_split_timecard_entries: [...] }` (an
+  // optional extra, only present under overtime management) is still a
+  // single TimecardEntry, not a list, once every branch's fields are merged.
+  const allOfBranches = schema.allOf as Record<string, unknown>[] | undefined;
+  if (Array.isArray(allOfBranches)) {
+    const merged: Record<string, unknown> = {};
+    let anyBareArray = false;
+    for (const branch of allOfBranches) {
+      if (branch.type === "array") anyBareArray = true;
+      else if (branch.type === "object" && branch.properties) {
+        Object.assign(merged, branch.properties as Record<string, unknown>);
+      }
+    }
+    if (anyBareArray) return { kind: "collection" };
+    return schemaIsCollection({ type: "object", properties: merged }, depth + 1);
+  }
+
+  // oneOf/anyOf describe genuine alternation, so any branch drawn as a
+  // collection means the response can genuinely be one.
+  for (const key of ["oneOf", "anyOf"] as const) {
     const branches = schema[key] as Record<string, unknown>[] | undefined;
     if (!Array.isArray(branches)) continue;
     let fallback: CollectionVerdict = null;
@@ -222,6 +257,16 @@ function pathEndsInCollection(path: string): boolean {
 const LIST_SUMMARY =
   /^(list|lists|index|search|get all|gets all|retrieve all|retrieves all|return all|returns all|show all|shows all|return a list|returns a list|get a list|gets a list|get the list)\b/i;
 
+/**
+ * Explicit collection language inside the operation's prose description, for
+ * endpoints whose *summary* is terse ("Get Layers") but whose description
+ * spells out the plural intent ("Returns all accessible layers ..."). Unlike
+ * LIST_SUMMARY this only needs to match anywhere near the start of the
+ * description, not anchor the whole string.
+ */
+const LIST_DESCRIPTION =
+  /\b(returns?|retrieves?|gets?|lists?|shows?)\s+(all|the collection of|a collection of|the full (?:list|set) of|a (?:full )?list of)\b/i;
+
 function detectReturnsCollection(
   operation: OASOperation,
   method: string,
@@ -236,32 +281,62 @@ function detectReturnsCollection(
     { content?: Record<string, { schema?: Record<string, unknown> }> }
   >;
   const ok = responses["200"] || responses["201"];
-  const schema = ok?.content?.["application/json"]?.schema;
+  // Prefer application/json, but Procore occasionally documents a response
+  // only under a wildcard content type (`*/*`) — falling through to
+  // `undefined` there discarded a real (if uninformative) schema and forced
+  // every such endpoint through the no-schema path below.
+  const content = ok?.content;
+  const schema =
+    content?.["application/json"]?.schema ??
+    (content ? Object.values(content)[0]?.schema : undefined);
 
   const verdict = schemaIsCollection(schema);
   if (verdict?.kind === "collection") {
     return { returnsCollection: true, collectionEnvelope: verdict.envelope };
   }
 
-  const summaryLooksList = LIST_SUMMARY.test(operation.summary || "");
+  const description = operation.description || "";
+  const textSignalsList =
+    LIST_SUMMARY.test(operation.summary || "") ||
+    LIST_DESCRIPTION.test(description.slice(0, 200));
   const collectionPath = pathEndsInCollection(path);
+  /**
+   * On a non-{id} path (`.../purchase_orders/{id}/related_documents`), the
+   * trailing segment already names a real sub-collection, so declared
+   * pagination alone is trustworthy -- either signal suffices. On an
+   * {id}-shaped path, that same trust is exactly what produced two false
+   * positives (show_company_vendor, show_recycled_checklist_template):
+   * Procore's spec sometimes copies page/per_page onto a genuine
+   * show-by-id endpoint with no textual list signal behind it. So there,
+   * pagination is corroborating evidence, not sufficient on its own -- it
+   * must be paired with explicit list language (which is what makes
+   * accessible_layers/{context_type_id} correctly read as a collection: its
+   * trailing segment looks like an id but is actually a filter, and its own
+   * description says "Retrieve all layers ...").
+   */
+  const overridesDefiniteSingle = collectionPath
+    ? hasPagination || textSignalsList
+    : hasPagination && textSignalsList;
 
   if (verdict?.kind === "ambiguous-envelope") {
     // The spec draws one enveloped element, but v2 list endpoints are often
-    // documented that way. Declared pagination settles it — a single record
-    // is never paged — and an explicit list summary on a collection path is
-    // the next strongest signal.
-    return hasPagination || (summaryLooksList && collectionPath)
+    // documented that way.
+    return overridesDefiniteSingle
       ? { returnsCollection: true, collectionEnvelope: verdict.envelope }
       : { returnsCollection: false };
   }
-  if (verdict?.kind === "single") return { returnsCollection: false };
+  if (verdict?.kind === "single") {
+    // A definite object schema usually means a genuine singleton — but
+    // Procore sometimes documents only the array *item's* shape (a "Show All
+    // ..." endpoint whose schema is one Batch object, not an array of them).
+    // Only the strongest signals overturn it, to avoid reintroducing
+    // pagination on truly-singleton endpoints.
+    return { returnsCollection: overridesDefiniteSingle };
+  }
 
-  // No usable schema. Trust declared pagination, then an explicit "List ..."
-  // summary; otherwise assume a single object. Guessing from path shape alone
-  // is what previously mislabelled singleton config endpoints as paginated.
-  if (!collectionPath) return { returnsCollection: false };
-  return { returnsCollection: hasPagination || summaryLooksList };
+  // No usable schema at all -- the weakest-evidence case. Trust the same
+  // signal combination as above.
+  return { returnsCollection: overridesDefiniteSingle };
 }
 
 /**

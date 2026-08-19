@@ -46,6 +46,7 @@ interface ToolManifestEntry {
   deprecated?: boolean;
   deprecatedAt?: string;
   sunset?: string;
+  versionSiblings?: Array<{ toolName: string; version: string }>;
 }
 
 function buildZodType(param: ToolParam, moduleName: string): z.ZodTypeAny {
