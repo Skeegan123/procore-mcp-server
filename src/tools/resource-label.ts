@@ -207,6 +207,11 @@ const TRAILING_CLAUSE =
 /** Manner phrases that describe how the call works, not what it acts on. */
 const TRAILING_MANNER = /\s+(in bulk|in a single request|by id|by path)$/i;
 
+/** Output-format destinations ("Export X to PDF") name the file format the
+ *  export produces, not the resource being exported -- leaving it in made
+ *  "email communication" read as "email communication to PDF". */
+const TRAILING_FORMAT = /\s+to\s+(pdf|csv|excel|xlsx|xml|json|zip)$/i;
+
 function cleanSummary(summary: string): string {
   let out = summary
     .replace(/\s*\([^)]*\)\s*$/g, " ") // trailing "(Project)" / "(Company)"
@@ -222,7 +227,7 @@ function cleanSummary(summary: string): string {
     const scoped = out.replace(pattern, "").trim();
     if (scoped.length >= 3) out = scoped;
   }
-  for (const pattern of [TRAILING_CLAUSE, TRAILING_MANNER]) {
+  for (const pattern of [TRAILING_CLAUSE, TRAILING_MANNER, TRAILING_FORMAT]) {
     const trimmed = out.replace(pattern, "").trim();
     if (trimmed.length >= 3) out = trimmed;
   }

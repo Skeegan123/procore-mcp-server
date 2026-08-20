@@ -159,9 +159,11 @@ export function synthesizePurpose(
   const verb = leadingVerb(entry.toolName);
 
   // A non-GET path ending in /restore recovers the record from the recycle
-  // bin, whatever the operation title says.
+  // bin, whatever the operation title says. The article agrees with
+  // "recycled"/"single"/"previously" below (all consonant-initial), not with
+  // whatever the resource label happens to start with.
   if (entry.method !== "GET" && /\/restore$/.test(entry.path)) {
-    return `Restores ${a} recycled ${singular} out of the recycle bin ${scope}`;
+    return `Restores a recycled ${singular} out of the recycle bin ${scope}`;
   }
 
   // Bulk endpoints act on many records per call; the singular CRUD templates
@@ -184,7 +186,7 @@ export function synthesizePurpose(
         // a paginated array (common for filter-option and settings payloads).
         return `Retrieves the full set of ${plural} ${scope}`;
       }
-      return `Retrieves ${a} single ${singular} ${scope}`;
+      return `Retrieves a single ${singular} ${scope}`;
 
     case "POST":
       if (UPSERT_NAME.test(entry.toolName)) {
@@ -192,13 +194,16 @@ export function synthesizePurpose(
       }
       if (RECYCLE_VERBS.has(verb)) return recycleSentence(resource, scope);
       if (RESTORE_VERBS.has(verb)) {
-        return `Restores ${a} previously recycled ${singular} ${scope}`;
+        return `Restores a previously recycled ${singular} ${scope}`;
       }
       if (DELETE_VERBS.has(verb)) {
         return `Removes the specified ${plural} ${scope}`;
       }
       if (CREATE_VERBS.has(verb)) {
-        return `Creates ${a} new ${singular} ${scope}`;
+        // The article agrees with "new" (always a consonant sound), not with
+        // whatever the resource label happens to start with -- "a new
+        // inspection..." never "an new inspection...".
+        return `Creates a new ${singular} ${scope}`;
       }
       // sync, send, reorder, assign, close, respond, clone, and the rest:
       // restate the operation itself rather than guessing a CRUD template.

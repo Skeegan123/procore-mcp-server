@@ -61,8 +61,22 @@ flips on strong corroboration: a non-`{id}` path trusts either declared
 pagination or explicit list language in the summary/description; an
 `{id}`-shaped path requires *both*, since Procore sometimes declares
 `page`/`per_page` on a genuine show-by-id endpoint with no textual list
-signal behind it. The envelope key is recorded as `collectionEnvelope` and
-named in the behavior sentence.
+signal behind it. A scalar/binary response (`type: "string", format:
+"binary"` — a raw CSV/PDF file download) is never a collection regardless of
+declared pagination, since a file body can't be "a JSON array of records".
+The envelope key is recorded as `collectionEnvelope` and named in the
+behavior sentence.
+
+Procore's own OAS text is untrustworthy in two specific, narrow cases, both
+handled in `generate-tools-manifest.ts` by clearing the inherited
+`description` so the tool falls back to its own summary-driven synthesis:
+a GET whose description opens with "Creates"/"Create" (a genuine spec error,
+unlike a PATCH/PUT upsert legitimately described that way), and a
+sub-resource action that shares byte-identical description text with its
+base resource's endpoint (`signature_requests` vs
+`signature_requests/{id}/signature`) — detected by one path's real segments
+being a strict prefix of the other's, as opposed to a scope variant that
+inserts a segment in the middle and legitimately shares one description.
 
 Three rules keep the prose honest, all enforced by `npm test`
 (`scripts/verify-manifest.ts`, which also runs in CI):
