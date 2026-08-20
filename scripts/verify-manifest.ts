@@ -52,6 +52,15 @@ const CREATE_NAME =
 const DANGLING_TAIL = /_(a|an|the|of|for|to|with|and|or|that|its|as|when)$/;
 const VERB_LEAK =
   /\b(the|a|an) (retrieves|returns|gets|lists|shows|recycles|creates|updates|deletes|verifies|fetches|checks|it) /;
+// "an" agreeing with a consonant-initial word inserted before the resource
+// noun ("Creates an new X", "Retrieves an single X") -- the article must
+// agree with the inserted adjective, not with whatever the resource label
+// starts with.
+const BAD_AN = /\ban (new|single|recycled|previously)\b/i;
+// A GET whose OWN description opens with "Creates"/"Create" is a genuine
+// Procore spec error (unlike a PATCH/PUT upsert legitimately worded that
+// way); generate-tools-manifest.ts should have cleared it to force synthesis.
+const GET_DESCRIBED_AS_CREATE = /^creates?\s+/i;
 
 const failures: string[] = [];
 function check(condition: boolean, message: string): void {
@@ -90,6 +99,11 @@ for (const e of manifest) {
 
   check(d.length > 100 && d.length <= 2048, `description length out of range: ${n}`);
   check(!VERB_LEAK.test(d), `verb leaked into resource label: ${n}`);
+  check(!BAD_AN.test(d), `"an" misagrees with a consonant-initial word: ${n}`);
+  check(
+    !(e.method === "GET" && GET_DESCRIBED_AS_CREATE.test(e.description.trim())),
+    `GET tool's own OAS description opens with Creates/Create: ${n}`
+  );
 
   if (e.method === "GET" && LIST_NAME.test(n)) {
     check(

@@ -290,6 +290,16 @@ function detectReturnsCollection(
     content?.["application/json"]?.schema ??
     (content ? Object.values(content)[0]?.schema : undefined);
 
+  // A scalar or binary payload (a raw CSV/PDF/file download, `type: "string",
+  // format: "binary"`) can never be "a JSON array of records", no matter what
+  // pagination params or list language the operation declares -- those are
+  // often just copied from a sibling JSON-list endpoint's parameter template.
+  // This is unconditional, unlike the softer `single` verdict below.
+  const scalarTypes = new Set(["string", "number", "integer", "boolean"]);
+  if (schema && typeof schema.type === "string" && scalarTypes.has(schema.type)) {
+    return { returnsCollection: false };
+  }
+
   const verdict = schemaIsCollection(schema);
   if (verdict?.kind === "collection") {
     return { returnsCollection: true, collectionEnvelope: verdict.envelope };
