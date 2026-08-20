@@ -86,6 +86,9 @@ Three rules keep the prose honest, all enforced by `npm test`
   `bulk_*`/`sync_*` call is described in the plural.
 - **Name the right record.** The id closing a path is the *target*, not a
   "parent record"; non-identifier path params (`{new_status}`) are neither.
+  A multipart/form-data PATCH/PUT (a file upload) doesn't get the "send only
+  the fields you intend to change" partial-update clause — the whole file is
+  what's being replaced, not a selection of JSON fields.
 - **Disambiguate cross-version siblings.** When Procore exposes the same
   operation at two API versions under different paths (dedup can't merge
   them — e.g. v1.1 moved weather logs under `daily_logs/`), each tool's
@@ -98,6 +101,27 @@ Three rules keep the prose honest, all enforced by `npm test`
 
 Name collisions are broken with meaning-bearing suffixes (scope, version,
 distinguishing path segment, HTTP method) before falling back to numbers.
+Renaming one member of a family can create a *new* collision with an
+unrelated entry (a scope suffix landing on a name a sibling's own summary
+already produced) — `resolveCollisions` reruns the whole stage sequence
+until a pass makes no changes, rather than handing that new collision
+straight to the numeric fallback. A scopeless member of a scope-spanning
+family (no `company_id`/`project_id` in its path at all) gets an explicit
+`_unscoped` suffix instead of being silently skipped. Versioning groups
+strip filler articles ("Create Coordination Issue" / "Create a coordination
+issue") so real siblings aren't missed over a stray "a". A bare HTTP-method
+word leading an OAS summary ("POST Company Role") is normalized to its
+natural verb before any of this runs, since it produces names like
+`post_company_role` otherwise.
+
+Two truncation limits on the same raw OAS description text (in
+`generate-catalog.ts` and `generate-tools-manifest.ts`) must stay in sync —
+a lower second limit silently re-truncates text the first limit already
+let through, severing markdown tables (Procore's file-format lists, mainly)
+mid-row again. Separately, the rollback in `trimToWholeSentence` that walks
+a truncated description back to its last full sentence must not treat an
+abbreviation's period ("e.g.", "i.e.") as a sentence end, or it truncates
+one clause into the next.
 
 ### Key Directories
 

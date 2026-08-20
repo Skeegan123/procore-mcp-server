@@ -136,7 +136,10 @@ function buildManifestEntry(
     method: entry.method,
     path: entry.path,
     summary: entry.summary,
-    description: truncate(detail.description || entry.summary, 1024),
+    // Matches generate-catalog.ts's own limit on this same text -- a second,
+    // tighter truncation here silently undid that one, re-severing markdown
+    // tables (file-format lists, mainly) that already fit within 1600.
+    description: truncate(detail.description || entry.summary, 1600),
     category: entry.category,
     module: entry.module,
     version: entry.version,
@@ -279,6 +282,10 @@ function versionGroupKey(method: string, summary: string): string {
     .toLowerCase()
     .trim()
     .replace(/\s*\([^)]*\)\s*$/, "")
+    // Filler articles: "Create Coordination Issue" and "Create a
+    // coordination issue" name the same operation, but only one has the
+    // article -- strip it so the two keys match.
+    .replace(/\b(a|an|the)\b\s*/g, "")
     .replace(/s$/, "");
   return `${method}::${normalized}`;
 }
@@ -424,7 +431,18 @@ function clearMisappliedDescriptions(manifest: ToolManifestEntry[]): void {
  * choose between `..._prime_change_orders` and `..._commitment_contracts`,
  * but not between `_2` and `_4`.
  */
-function resolveCollisions(manifest: ToolManifestEntry[]): void {
+/**
+ * One pass of the four disambiguation stages over whatever name collisions
+ * currently exist. Renaming a member (stage 1's scope suffix, most often)
+ * can create a *new* collision with an entry that was never part of the
+ * original group (`create_timecard_entry` + "(Project)" in one sibling's own
+ * summary already produced `create_timecard_entry_project` before the other
+ * sibling's scope suffix independently produced the same string) --
+ * `resolveCollisions` calls this repeatedly so that new collision is
+ * re-examined by the same stages rather than falling straight to a bare
+ * numeric suffix.
+ */
+function disambiguationPass(manifest: ToolManifestEntry[]): void {
   const nameToEntries = new Map<string, ToolManifestEntry[]>();
   for (const e of manifest) {
     if (!nameToEntries.has(e.toolName)) nameToEntries.set(e.toolName, []);
@@ -435,12 +453,18 @@ function resolveCollisions(manifest: ToolManifestEntry[]): void {
     if (entries.length <= 1) continue;
 
     // Stage 1: company/project scope, only when the family actually spans
-    // scopes — a suffix every member shares distinguishes nothing.
+    // scopes — a suffix every member shares distinguishes nothing. The
+    // scopeless member matters just as much as the scoped ones: a bare
+    // `/tools` and a `/projects/{id}/tools` sharing a name because the
+    // summary already says "project" left the scopeless one with no
+    // suffix at all and nothing to tell it apart from its scoped sibling.
     if (new Set(entries.map((e) => scopeOf(e.path))).size > 1) {
       for (const e of entries) {
         const scope = scopeOf(e.path);
         if (scope !== "root" && !name.includes(scope)) {
           e.toolName = withSuffix(name, scope);
+        } else if (scope === "root" && !name.includes("unscoped")) {
+          e.toolName = withSuffix(name, "unscoped");
         }
       }
     }
@@ -463,6 +487,17 @@ function resolveCollisions(manifest: ToolManifestEntry[]): void {
       if (new Set(peers.map((p) => p.method)).size <= 1) return null;
       return withSuffix(e.toolName, e.method.toLowerCase());
     });
+  }
+}
+
+function resolveCollisions(manifest: ToolManifestEntry[]): void {
+  // Run until a pass produces no renames (a new collision the previous pass
+  // just created gets caught by the next one) or a small safety cap is hit --
+  // real cascades in this dataset are one level deep, so this is generous.
+  for (let i = 0; i < 4; i++) {
+    const before = manifest.map((e) => e.toolName).join(" ");
+    disambiguationPass(manifest);
+    if (manifest.map((e) => e.toolName).join(" ") === before) break;
   }
 
   // Final pass: guarantee uniqueness. Distinct endpoints can still collapse to
