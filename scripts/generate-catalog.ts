@@ -370,6 +370,16 @@ const TYPO_FIXES: Array<[RegExp, string]> = [
   // paired removal endpoint; the POST grants availability. Matches with or
   // without the article so the operation title is repaired too.
   [/\b(makes?)\s+((?:a|an)\s+)?(.+?)\s+from being available to\b/gi, "$1 $2$3 available to"],
+  // A bare HTTP-method word leading the summary ("POST Company Role") is an
+  // OAS authoring shortcut, not a natural-language title -- it produced tool
+  // names like post_company_role/patch_company_role that read as raw HTTP
+  // verbs instead of an action. GET/DELETE are already natural verbs, so
+  // those two rules are pure casing normalization.
+  [/^POST\s+/, "Create "],
+  [/^PATCH\s+/, "Update "],
+  [/^PUT\s+/, "Update "],
+  [/^GET\s+/, "Get "],
+  [/^DELETE\s+/, "Delete "],
 ];
 
 function fixTypos(text: string): string {
@@ -514,7 +524,10 @@ function main() {
         method: method.toUpperCase(),
         path,
         summary: fixTypos(operation.summary || ""),
-        description: truncate(fixTypos(operation.description || ""), 800),
+        // 1600 comfortably fits all but a handful of Procore's longest
+        // operation descriptions (file-format tables, mainly) without
+        // truncation; the ones still cut fall back to trimToWholeSentence.
+        description: truncate(fixTypos(operation.description || ""), 1600),
         tag,
         deprecated: operation.deprecated === true,
         deprecatedAt: operation["x-deprecated-at"],

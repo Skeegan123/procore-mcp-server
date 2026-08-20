@@ -35,6 +35,7 @@ interface ManifestEntry {
   version: string;
   params: Array<{ name: string; required: boolean; source?: string }>;
   bodyWrapper?: string;
+  contentType?: string | null;
   returnsCollection?: boolean;
   /** Response property that wraps the collection array (v2.x uses "data"). */
   collectionEnvelope?: string;
@@ -104,14 +105,31 @@ function buildPurpose(entry: ManifestEntry, resource: ResourceLabel): string {
  * leave a sentence severed mid-clause. Roll back to the last full sentence so
  * the purpose line always reads as finished prose.
  */
+/** Abbreviations whose period reads as a sentence end to a naive scan --
+ *  "e.g. Smartsheet, OpenProject" isn't a sentence boundary, and treating it
+ *  as one severed a markdown table mid-row. */
+const ABBREVIATION_END = /\b(e\.g|i\.e|etc|vs|approx|no|cf|fig|vol|dr|mr|mrs|ms|jr|sr)\.$/i;
+
+/** The last ". "/"! "/"? " in `body` that isn't a false boundary from an
+ *  abbreviation, or -1 if none exists. */
+function lastValidSentenceEnd(body: string): number {
+  const boundary = /[.!?]\s/g;
+  let match: RegExpExecArray | null;
+  let best = -1;
+  while ((match = boundary.exec(body))) {
+    const idx = match.index;
+    if (body[idx] === "." && ABBREVIATION_END.test(body.slice(0, idx + 1))) {
+      continue;
+    }
+    best = idx;
+  }
+  return best;
+}
+
 function trimToWholeSentence(text: string): string {
   if (!text.endsWith("...")) return text;
   const body = text.slice(0, -3);
-  const lastStop = Math.max(
-    body.lastIndexOf(". "),
-    body.lastIndexOf("! "),
-    body.lastIndexOf("? ")
-  );
+  const lastStop = lastValidSentenceEnd(body);
   // Only roll back if a decent amount of prose survives.
   if (lastStop > 80) return body.slice(0, lastStop + 1);
   return body.trimEnd().replace(/[,;:]$/, "") + ".";
@@ -181,10 +199,13 @@ function buildUsageGuidance(
     );
   } else if (
     (entry.method === "PATCH" || entry.method === "PUT") &&
-    !/\/restore$/.test(entry.path)
+    !/\/restore$/.test(entry.path) &&
+    entry.contentType !== "multipart/form-data"
   ) {
-    // A restore endpoint recovers a record; it takes no field updates, so the
-    // partial-update guidance does not apply.
+    // A restore endpoint recovers a record; it takes no field updates. A
+    // multipart upload replaces the whole file, not a selection of JSON
+    // fields, so "send only the fields you intend to change" doesn't apply
+    // to either.
     clauses.push(
       `Send only the fields you intend to change; omitted fields keep their current values`
     );

@@ -12,6 +12,10 @@
  *     ("the retrieves the status")
  *   - a bulk/batch endpoint is never listed as a "version sibling" of a
  *     single-record one, and vice versa
+ *   - no name is a bare HTTP method word ("post_company_role") or an opaque
+ *     numeric-suffix collision fallback ("_2")
+ *   - no description holds an unclosed markdown table (an even number of
+ *     "|" per row) or a mid-word "..." truncation artifact
  *
  * Run: npm test (tsx scripts/verify-manifest.ts)
  */
@@ -50,6 +54,12 @@ const CREATE_NAME =
 // "by"/"from"/"in" are excluded: field names like created_by and
 // received_from legitimately end on them.
 const DANGLING_TAIL = /_(a|an|the|of|for|to|with|and|or|that|its|as|when)$/;
+// "get_"/"delete_" are natural English verbs and legitimately common; only
+// "post"/"patch"/"put" as a bare leading word are the raw-HTTP-method
+// leftovers this check exists for.
+const HTTP_VERB_NAME = /^(post|patch|put)_/;
+const NUMERIC_SUFFIX = /_\d+$/;
+const VERSIONED_SUFFIX = /_v\d+_\d+$/;
 const VERB_LEAK =
   /\b(the|a|an) (retrieves|returns|gets|lists|shows|recycles|creates|updates|deletes|verifies|fetches|checks|it) /;
 // "an" agreeing with a consonant-initial word inserted before the resource
@@ -90,6 +100,11 @@ for (const e of manifest) {
   check(n.length <= 64, `name exceeds 64 chars: ${n}`);
   check(/^[a-z0-9_]+$/.test(n), `name is not snake_case: ${n}`);
   check(!DANGLING_TAIL.test(n), `name ends on a stranded function word: ${n}`);
+  check(!HTTP_VERB_NAME.test(n), `name is a bare HTTP method word: ${n}`);
+  check(
+    !(NUMERIC_SUFFIX.test(n) && !VERSIONED_SUFFIX.test(n)),
+    `name falls back to an opaque numeric collision suffix: ${n}`
+  );
   check(buildTitle(e.summary, e.deprecated).length > 0, `empty title: ${n}`);
 }
 
@@ -104,6 +119,11 @@ for (const e of manifest) {
     !(e.method === "GET" && GET_DESCRIBED_AS_CREATE.test(e.description.trim())),
     `GET tool's own OAS description opens with Creates/Create: ${n}`
   );
+  // Procore's own prose can legitimately contain "..." (e.g. as JSON example
+  // syntax, `[<id>, ...]`), so the marker itself isn't the signal -- three
+  // dots directly against a following letter, with no space, is: that's a
+  // hard character-count cut through the middle of a word.
+  check(!/\.\.\.[a-z]/i.test(d), `description has a mid-word truncation artifact: ${n}`);
 
   if (e.method === "GET" && LIST_NAME.test(n)) {
     check(
