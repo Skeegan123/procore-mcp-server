@@ -92,17 +92,20 @@ async function main(): Promise<void> {
   // Register 7 meta/discovery tools
   registerTools(server);
 
-  // Register all auto-generated endpoint tools unless the host opted into
-  // the lean surface. PROCORE_TOOL_MODE=meta serves only the 7 discovery
-  // tools — full API coverage stays available through procore_api_call while
-  // keeping the tool list small enough for context-constrained clients.
+  // Serve the 7 discovery tools by default. Registering one tool per Procore
+  // endpoint instead emits roughly 4.7 MB (~1.2M tokens) of tool definitions,
+  // which exceeds every current model's context window -- so the full surface
+  // is opt-in via PROCORE_TOOL_MODE=all rather than the default. Coverage is
+  // unaffected either way: procore_api_call reaches every endpoint.
   let autoCount = 0;
-  if ((process.env.PROCORE_TOOL_MODE || "all").toLowerCase() !== "meta") {
+  if ((process.env.PROCORE_TOOL_MODE || "meta").toLowerCase() === "all") {
     autoCount = registerAutoTools(server);
     console.error(`Auto-registered ${autoCount} endpoint tools`);
   } else {
     console.error(
-      "PROCORE_TOOL_MODE=meta — serving the 7 discovery tools only"
+      "Serving the 7 discovery tools; every Procore endpoint stays reachable " +
+        "through procore_api_call. Set PROCORE_TOOL_MODE=all to also register " +
+        "a dedicated tool per endpoint."
     );
   }
 

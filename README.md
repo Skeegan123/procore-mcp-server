@@ -47,10 +47,18 @@ PROCORE_CLIENT_SECRET=your_client_secret
 PROCORE_COMPANY_ID=your_company_id
 ```
 
-Optional: set `PROCORE_TOOL_MODE=meta` to serve only the 7 discovery tools
-instead of all ~2,900 generated endpoint tools. Every endpoint stays callable
-through `procore_api_call`; this keeps the tool list small for
-context-constrained MCP clients.
+By default the server exposes the **7 discovery tools**, and every Procore
+endpoint is reached through `procore_api_call`. Registering a dedicated tool
+per endpoint instead emits roughly 4.7 MB (~1.2M tokens) of tool definitions —
+more than any current model's context window — so that surface is opt-in:
+
+```env
+PROCORE_TOOL_MODE=all
+```
+
+Coverage is identical in both modes; only the size of the advertised tool list
+differs. If you switch to `all` and are migrating from before v2.0.0, see
+`data/tool-renames.json` for the old -> new tool name map.
 
 You'll need Procore's OpenAPI spec file placed at `specs/combined_OAS.json`. This file is not included in the repo due to its size (~54MB). You can obtain it from [Procore's API documentation](https://developers.procore.com/).
 
@@ -136,7 +144,7 @@ specs/        Source OAS file (gitignored — too large for the repo)
 
 2. **Auth**: Run `npm run auth` once to complete the OAuth flow in your browser. Tokens are saved to `~/.procore-mcp/tokens.json` and auto-refresh when expired.
 
-3. **Runtime**: The MCP server loads the catalog and registers all tools. When an AI assistant calls a tool, the server maps it to the correct Procore API endpoint, injects auth headers, handles rate limits and pagination, and returns the response.
+3. **Runtime**: The MCP server loads the catalog and registers the 7 discovery tools (plus the full per-endpoint surface when `PROCORE_TOOL_MODE=all`). When an AI assistant calls a tool, the server maps it to the correct Procore API endpoint, injects auth headers, handles rate limits and pagination, and returns the response.
 
 ## Inspiration
 

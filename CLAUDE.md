@@ -114,6 +114,21 @@ word leading an OAS summary ("POST Company Role") is normalized to its
 natural verb before any of this runs, since it produces names like
 `post_company_role` otherwise.
 
+Generated tool names follow a `verb_noun` convention imposed by
+`scripts/normalize-verbs.ts`, which runs between naming and collision
+resolution. Procore's own titles reach for whatever verb the doc author liked
+("List RFIs", "Show RFI", "Get All Equipment", "Retrieve Note"), so the read
+synonyms all collapse to `list_` or `get_` — chosen from
+`returnsCollection`, not from the prose, so the name is correct by
+construction and stays consistent with the description. Third-person titles
+("Creates"/"Updates") fold to the imperative, and `destroy_` on a DELETE
+folds to `delete_`. Verbs naming a *distinct* action — reorder, recycle,
+restore, sync, send, close, assign, and add/remove in their association sense
+— are deliberately left alone, since flattening them onto a CRUD prefix would
+reintroduce exactly the name-vs-semantics bug the rest of this section exists
+to prevent. `data/tool-renames.json` records old -> current names for anyone
+migrating.
+
 Two truncation limits on the same raw OAS description text (in
 `generate-catalog.ts` and `generate-tools-manifest.ts`) must stay in sync —
 a lower second limit silently re-truncates text the first limit already
@@ -146,8 +161,10 @@ one clause into the next.
 PROCORE_CLIENT_ID     - OAuth client ID from Procore Developer Portal
 PROCORE_CLIENT_SECRET - OAuth client secret
 PROCORE_COMPANY_ID    - Default Procore company ID (integer)
-PROCORE_TOOL_MODE     - "all" (default) or "meta" (serve only the 7 discovery
-                        tools; endpoints stay reachable via procore_api_call)
+PROCORE_TOOL_MODE     - "meta" (default) serves only the 7 discovery tools;
+                        "all" additionally registers one tool per endpoint.
+                        Coverage is identical either way — procore_api_call
+                        reaches every endpoint in both modes.
 ```
 
 ## Releasing

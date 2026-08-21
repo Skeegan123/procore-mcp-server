@@ -18,6 +18,7 @@ import {
   withSuffix,
   collapseStutter,
 } from "./manifest-helpers.js";
+import { normalizeToolVerb } from "./normalize-verbs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -253,6 +254,11 @@ function distinguishingSegment(
   return pick.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
 }
 
+/** The `{param}` names a path declares, in order. */
+function pathParamNames(path: string): string[] {
+  return [...path.matchAll(/\{([^}]+)\}/g)].map((mm) => mm[1]);
+}
+
 /** Rename the still-colliding members of a family with one disambiguator. */
 function applyStage(
   entries: ToolManifestEntry[],
@@ -482,6 +488,23 @@ function disambiguationPass(manifest: ToolManifestEntry[]): void {
       return segment ? collapseStutter(withSuffix(e.toolName, segment)) : null;
     });
 
+    // Stage 3b: parent scope. Two endpoints can share every literal segment
+    // and differ only by whether a parent id narrows the collection --
+    // `/direct_costs/{direct_cost_id}/line_items` (one cost's lines) beside
+    // `/direct_costs/line_items` (every line in the project). Stage 3 finds
+    // nothing to grab because the literal segments are identical, so name the
+    // parent whose id does the narrowing.
+    applyStage(entries, (e, peers) => {
+      const mine = pathParamNames(e.path);
+      const others = new Set(
+        peers.filter((p) => p !== e).flatMap((p) => pathParamNames(p.path))
+      );
+      const unique = mine.filter((n) => !others.has(n));
+      if (unique.length === 0) return null;
+      const parent = unique[unique.length - 1].replace(/_id$/, "");
+      return collapseStutter(withSuffix(e.toolName, "for_" + parent));
+    });
+
     // Stage 4: HTTP method, for PATCH/PUT twins on the same path.
     applyStage(entries, (e, peers) => {
       if (new Set(peers.map((p) => p.method)).size <= 1) return null;
@@ -555,10 +578,31 @@ function main() {
     e.toolName = summaryToToolName(e.summary, e.method, e.path, "v1.0");
   }
 
+  // Collapse the leading verb onto a consistent verb_noun convention before
+  // collisions are resolved, so any new overlap the renaming creates is
+  // disambiguated by the same meaning-bearing stages as any other.
+  const preVerbNames = manifest.map((e) => e.toolName);
+  for (const e of manifest) {
+    e.toolName = normalizeToolVerb(e);
+  }
+
   resolveCollisions(manifest);
   attachVersionSiblings(manifest);
   clearMisappliedDescriptions(manifest);
   clearGetDescribedAsCreate(manifest);
+
+  // Migration aid: old name -> current name, for anyone with saved prompts
+  // or configs referencing the pre-normalization surface. Indices stay
+  // aligned because resolveCollisions renames in place without reordering.
+  const renames: Record<string, string> = {};
+  manifest.forEach((e, i) => {
+    if (preVerbNames[i] !== e.toolName) renames[preVerbNames[i]] = e.toolName;
+  });
+  writeFileSync(
+    join(DATA_DIR, "tool-renames.json"),
+    JSON.stringify(renames, null, 2)
+  );
+  console.log(`Verb normalization renamed ${Object.keys(renames).length} tool(s); map written to data/tool-renames.json.`);
 
   writeFileSync(
     join(DATA_DIR, "tools-manifest.json"),
