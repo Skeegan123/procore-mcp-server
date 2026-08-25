@@ -168,7 +168,17 @@ export function registerTools(server: McpServer): void {
           .record(z.unknown())
           .optional()
           .describe(
-            "JSON request body for POST/PUT/PATCH. Use the exact field names and nesting from procore_get_endpoint_details; ignored on GET and DELETE."
+            "Request body for POST/PUT/PATCH. For multipart file fields, pass {base64, filename?, contentType?}; use the exact nesting from procore_get_endpoint_details. Ignored on GET and DELETE."
+          ),
+        content_type: z
+          .enum([
+            "application/json",
+            "application/merge-patch+json",
+            "multipart/form-data",
+          ])
+          .optional()
+          .describe(
+            "Request media type reported by procore_get_endpoint_details. Defaults to application/json when a body is present."
           ),
         company_id: z
           .number()
@@ -196,8 +206,11 @@ export function registerTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const text = await handleApiCall(args);
-      return { content: [{ type: "text" as const, text }] };
+      const result = await handleApiCall(args);
+      return {
+        content: [{ type: "text" as const, text: result.text }],
+        isError: result.isError,
+      };
     }
   );
 
@@ -260,10 +273,14 @@ export function registerTools(server: McpServer): void {
       title: "Set Runtime Configuration Value",
       description:
         "Sets the default company_id or project_id that later procore_api_call requests use when the " +
-        "path needs one and you omit it. Use it to switch project context mid-session instead of " +
-        "restarting the server, then call procore_get_config to confirm what took effect. " +
-        "Only 'company_id' and 'project_id' are accepted; both are coerced to integers, and a " +
-        "non-numeric value is reported back as a message rather than stored. " +
+        "path needs one and you omit it. A value in path_params wins for that URL placeholder, and a " +
+        "per-call company_id wins for that call's header and company placeholder. The runtime company " +
+        "value also overrides PROCORE_COMPANY_ID for the Procore-Company-Id header. Use this to switch " +
+        "project context mid-session instead of restarting the server, then call procore_get_config to " +
+        "confirm what took effect. Only 'company_id' and 'project_id' are accepted; each must be a " +
+        "positive safe integer represented by complete decimal digits. Partial strings such as '12x', " +
+        "zero, negatives, decimals, and values above 9007199254740991 are reported back as a message " +
+        "rather than stored. " +
         "The change lives in memory for this server process only — it is never written to disk and is " +
         "lost on restart. Setting the same value twice is a no-op, and nothing in Procore is modified: " +
         "this only changes which ids this server fills in for you. " +
@@ -277,7 +294,7 @@ export function registerTools(server: McpServer): void {
         value: z
           .string()
           .describe(
-            "The id to store, as a string of digits (e.g. '12345'). Coerced to an integer; a non-numeric value is rejected."
+            "The ID to store as complete decimal digits (e.g. '12345'). It must be a positive safe integer; partial strings such as '12x', zero, negatives, decimals, and values above 9007199254740991 are rejected."
           ),
       },
       annotations: {

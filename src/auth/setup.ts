@@ -4,11 +4,19 @@ import { getAuthBaseUrl, getApiBaseUrl } from "./oauth.js";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
+import {
+  buildOAuthAuthorizationUrl,
+  createOAuthState,
+  isValidOAuthState,
+} from "./oauth-state.js";
+import { isLoopbackAddress } from "./loopback.js";
+import { findProjectRoot } from "../project-root.js";
 
 // Load .env manually (no dotenv dependency)
 function loadEnv(): void {
   const __dir = dirname(fileURLToPath(import.meta.url));
-  const envPath = join(__dir, "..", "..", ".env");
+  const envPath = join(findProjectRoot(__dir), ".env");
   try {
     const content = readFileSync(envPath, "utf8");
     for (const line of content.split("\n")) {
@@ -58,9 +66,13 @@ async function main(): Promise<void> {
 
   const authBase = getAuthBaseUrl();
   const apiBase = getApiBaseUrl();
-  const authUrl =
-    `${authBase}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
+  const oauthState = createOAuthState();
+  const authUrl = buildOAuthAuthorizationUrl(
+    authBase,
+    clientId,
+    REDIRECT_URI,
+    oauthState
+  );
 
   console.log(`Environment: ${env}`);
   console.log(`Auth base: ${authBase}`);
@@ -70,15 +82,30 @@ async function main(): Promise<void> {
 
   const server = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+
       const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
       // Procore redirects to http://localhost?code=XXX (root path with query params)
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
+      const state = url.searchParams.get("state");
+
+      if ((code || error) && !isValidOAuthState(oauthState, state)) {
+        res.writeHead(400, { "Content-Type": "text/html" });
+        res.end("<h1>Auth Error</h1><p>Invalid OAuth state. Start authentication again.</p>");
+        console.error("Auth error: invalid OAuth state");
+        shutdown(1);
+        return;
+      }
 
       if (error) {
         res.writeHead(400, { "Content-Type": "text/html" });
-        res.end(`<h1>Auth Error</h1><p>${error}</p>`);
+        res.end("<h1>Auth Error</h1><p>Procore rejected the authorization request.</p>");
         console.error(`Auth error: ${error}`);
         shutdown(1);
         return;
@@ -109,7 +136,7 @@ async function main(): Promise<void> {
           shutdown(0);
         } catch (err) {
           res.writeHead(500, { "Content-Type": "text/html" });
-          res.end(`<h1>Error</h1><p>${(err as Error).message}</p>`);
+          res.end("<h1>Error</h1><p>Token exchange failed. Check the terminal for details.</p>");
           console.error("Token exchange failed:", (err as Error).message);
           shutdown(1);
         }
@@ -133,20 +160,25 @@ h1{margin:0 0 .5rem}p{color:#999;margin:0}</style></head>
     }, 1000);
   }
 
-  server.listen(PORT, () => {
-    console.log(`Callback server listening on port ${PORT}`);
+  server.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
+    console.log(`Callback server listening on localhost:${PORT}`);
     console.log(`Opening browser to authorize...\n`);
 
-    // Open browser (cross-platform)
-    import("child_process").then(({ exec }) => {
-      const opener =
-        process.platform === "win32"
-          ? `start "" "${authUrl}"`
-          : process.platform === "darwin"
-            ? `open "${authUrl}"`
-            : `xdg-open "${authUrl}"`;
-      exec(opener);
+    // Pass the URL as an argument rather than interpolating it into a shell.
+    const opener =
+      process.platform === "win32"
+        ? spawn("rundll32", ["url.dll,FileProtocolHandler", authUrl], {
+            detached: true,
+            stdio: "ignore",
+          })
+        : process.platform === "darwin"
+          ? spawn("open", [authUrl], { detached: true, stdio: "ignore" })
+          : spawn("xdg-open", [authUrl], { detached: true, stdio: "ignore" });
+    opener.on("error", (err) => {
+      console.error(`Could not open the browser: ${err.message}`);
+      console.error(`Open this URL manually:\n${authUrl}`);
     });
+    opener.unref();
   });
 
   // Handle port 80 permission error
@@ -154,8 +186,8 @@ h1{margin:0 0 .5rem}p{color:#999;margin:0}</style></head>
     if (err.code === "EACCES") {
       console.error(
         `\nPort ${PORT} requires elevated permissions.\n` +
-          "Run with: sudo npm run auth\n" +
-          "Or run: sudo tsx src/auth/setup.ts"
+          "Do not run npm as root. Use a local environment that permits a " +
+          "loopback listener on port 80, then run npm run auth again."
       );
       process.exit(1);
     }

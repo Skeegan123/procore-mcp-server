@@ -1,5 +1,41 @@
 import { TokenData, readTokens, writeTokens, isTokenExpired } from "./token-store.js";
 
+const DEFAULT_AUTH_TIMEOUT_MS = 30_000;
+const MAX_AUTH_TIMEOUT_MS = 5 * 60_000;
+
+function authTimeoutMs(upperBoundMs?: number): number {
+  const configured = Number.parseInt(
+    process.env.PROCORE_AUTH_TIMEOUT_MS || "",
+    10
+  );
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return upperBoundMs === undefined
+      ? DEFAULT_AUTH_TIMEOUT_MS
+      : Math.min(DEFAULT_AUTH_TIMEOUT_MS, upperBoundMs);
+  }
+  const bounded = Math.min(configured, MAX_AUTH_TIMEOUT_MS);
+  return upperBoundMs === undefined ? bounded : Math.min(bounded, upperBoundMs);
+}
+
+async function fetchAuth(
+  url: string,
+  init: RequestInit,
+  upperBoundMs?: number
+): Promise<Response> {
+  const timeoutMs = authTimeoutMs(upperBoundMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if ((err as Error).name === "TimeoutError") {
+      throw new Error(`Procore OAuth request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  }
+}
+
 function getTokenUrl(): string {
   const env = process.env.PROCORE_ENV || "production";
   if (env === "sandbox") return "https://login-sandbox.procore.com/oauth/token";
@@ -59,7 +95,7 @@ export async function exchangeCodeForTokens(
     redirect_uri: redirectUri,
   });
 
-  const res = await fetch(getTokenUrl(), {
+  const res = await fetchAuth(getTokenUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -76,7 +112,9 @@ export async function exchangeCodeForTokens(
   return tokens;
 }
 
-export async function refreshAccessToken(): Promise<TokenData> {
+let refreshInFlight: Promise<TokenData> | null = null;
+
+async function performTokenRefresh(timeoutMs?: number): Promise<TokenData> {
   const current = readTokens();
   if (!current) {
     throw new Error(
@@ -93,11 +131,15 @@ export async function refreshAccessToken(): Promise<TokenData> {
     refresh_token: current.refresh_token,
   });
 
-  const res = await fetch(getTokenUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
+  const res = await fetchAuth(
+    getTokenUrl(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+    timeoutMs
+  );
 
   if (!res.ok) {
     const text = await res.text();
@@ -115,7 +157,16 @@ export async function refreshAccessToken(): Promise<TokenData> {
   return tokens;
 }
 
-export async function getValidAccessToken(): Promise<string> {
+export function refreshAccessToken(timeoutMs?: number): Promise<TokenData> {
+  if (!refreshInFlight) {
+    refreshInFlight = performTokenRefresh(timeoutMs).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+export async function getValidAccessToken(timeoutMs?: number): Promise<string> {
   let tokens = readTokens();
   if (!tokens) {
     throw new Error(
@@ -124,7 +175,7 @@ export async function getValidAccessToken(): Promise<string> {
   }
 
   if (isTokenExpired(tokens)) {
-    tokens = await refreshAccessToken();
+    tokens = await refreshAccessToken(timeoutMs);
   }
 
   return tokens.access_token;

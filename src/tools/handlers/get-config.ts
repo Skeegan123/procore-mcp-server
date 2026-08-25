@@ -19,16 +19,22 @@ export async function handleGetConfig(): Promise<string> {
     lines.push("Auth: Not authenticated. Run `npm run auth` to set up.");
   }
 
-  // Company ID
-  const companyId =
-    runtimeConfig.company_id || process.env.PROCORE_COMPANY_ID;
-  lines.push(
-    `\nDefault Company ID: ${companyId || "Not set"}`
-  );
+  // Company ID. Keep the source explicit: runtime values are process-local
+  // overrides, while PROCORE_COMPANY_ID is only the environment fallback.
+  const runtimeCompanyId = runtimeConfig.company_id;
+  const environmentCompanyId = process.env.PROCORE_COMPANY_ID;
+  const companyId = runtimeCompanyId ?? environmentCompanyId;
+  lines.push(`\nDefault Company ID: ${companyId || "Not set"}`);
+  if (runtimeCompanyId !== undefined) {
+    lines.push("Company ID source: runtime override (process-local)");
+  } else if (environmentCompanyId) {
+    lines.push("Company ID source: PROCORE_COMPANY_ID environment variable");
+  }
 
   // Runtime overrides
-  if (runtimeConfig.project_id) {
+  if (runtimeConfig.project_id !== undefined) {
     lines.push(`Default Project ID: ${runtimeConfig.project_id}`);
+    lines.push("Project ID source: runtime override (process-local)");
   }
 
   // Additional runtime config
@@ -43,7 +49,8 @@ export async function handleGetConfig(): Promise<string> {
   }
 
   lines.push(
-    "\nUse procore_set_config to change runtime settings (company_id, project_id)."
+    "\nUse procore_set_config to change runtime settings (company_id, project_id). " +
+      "Runtime settings apply only to this server process and are lost on restart."
   );
 
   return lines.join("\n");

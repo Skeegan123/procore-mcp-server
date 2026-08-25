@@ -3,18 +3,19 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerTools } from "./tools/registry.js";
 import { registerAutoTools } from "./tools/auto-register.js";
 import { loadCatalog, loadCategories } from "./catalog/repository.js";
-import { tokensExist } from "./auth/token-store.js";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { findProjectRoot } from "./project-root.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = findProjectRoot(__dirname);
 
 /** The published package version, so the MCP handshake reports the truth. */
 function packageVersion(): string {
   try {
     const pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")
+      readFileSync(join(PROJECT_ROOT, "package.json"), "utf8")
     );
     return pkg.version || "0.0.0";
   } catch {
@@ -25,7 +26,7 @@ function packageVersion(): string {
 // Load .env file manually
 function loadEnv(): void {
   // When compiled: dist/src/index.js → need ../../.env to reach project root
-  const envPath = join(__dirname, "..", "..", ".env");
+  const envPath = join(PROJECT_ROOT, ".env");
   try {
     const content = readFileSync(envPath, "utf8");
     for (const line of content.split("\n")) {
@@ -47,25 +48,16 @@ function loadEnv(): void {
 async function main(): Promise<void> {
   loadEnv();
 
-  // Validate required env vars
+  // API tools validate credentials when called. Keeping startup available lets
+  // the local discovery tools inspect the bundled catalog before authentication.
   const clientId = process.env.PROCORE_CLIENT_ID;
   const clientSecret = process.env.PROCORE_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     console.error(
-      "ERROR: PROCORE_CLIENT_ID and PROCORE_CLIENT_SECRET are required.\n" +
-        "Set them in .env or pass via Claude Desktop/Code config."
+      "Procore API calls are disabled until PROCORE_CLIENT_ID and " +
+        "PROCORE_CLIENT_SECRET are configured. Local discovery tools remain available."
     );
-    process.exit(1);
-  }
-
-  // Check tokens exist
-  if (!tokensExist()) {
-    console.error(
-      "ERROR: No Procore auth tokens found.\n" +
-        "Run 'npm run auth' to authenticate with Procore first."
-    );
-    process.exit(1);
   }
 
   // Pre-load catalog into memory
@@ -103,7 +95,7 @@ async function main(): Promise<void> {
     console.error(`Auto-registered ${autoCount} endpoint tools`);
   } else {
     console.error(
-      "Serving the 7 discovery tools; every Procore endpoint stays reachable " +
+      "Serving the 7 compact meta tools; every Procore endpoint stays reachable " +
         "through procore_api_call. Set PROCORE_TOOL_MODE=all to also register " +
         "a dedicated tool per endpoint."
     );

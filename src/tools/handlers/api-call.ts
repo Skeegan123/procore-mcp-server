@@ -7,16 +7,18 @@ export async function handleApiCall(args: {
   path_params?: Record<string, string>;
   query_params?: Record<string, string | number | boolean>;
   body?: Record<string, unknown>;
+  content_type?: string;
   company_id?: number;
   page?: number;
   per_page?: number;
-}): Promise<string> {
+}): Promise<{ text: string; isError: boolean }> {
   const options: ApiCallOptions = {
     method: args.method,
     path: args.path,
     pathParams: args.path_params,
     queryParams: args.query_params,
     body: args.body,
+    contentType: args.content_type,
     companyId: args.company_id,
     page: args.page,
     perPage: args.per_page,
@@ -67,9 +69,12 @@ export async function handleApiCall(args: {
       );
     }
 
-    return parts.join("\n");
+    return { text: parts.join("\n"), isError: false };
   } catch (err) {
     const error = err as Error;
-    return `Error: ${error.message}\n\nSuggestion: Check the endpoint path and parameters. Use procore_get_endpoint_details to verify the correct format.`;
+    return {
+      text: `Error: ${error.message}\n\nSuggestion: Check the endpoint path and parameters. Use procore_get_endpoint_details to verify the correct format.`,
+      isError: true,
+    };
   }
 }

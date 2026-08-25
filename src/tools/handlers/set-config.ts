@@ -10,17 +10,15 @@ export async function handleSetConfig(args: {
     return `Invalid config key: "${args.key}". Allowed keys: ${allowedKeys.join(", ")}`;
   }
 
-  const numericKeys = ["company_id", "project_id"];
-  const value = numericKeys.includes(args.key)
-    ? parseInt(args.value, 10)
-    : args.value;
-
-  if (numericKeys.includes(args.key) && isNaN(value as number)) {
-    return `"${args.key}" must be a number. Got: "${args.value}"`;
+  try {
+    // setRuntimeConfig performs strict validation and canonicalizes IDs to a
+    // number. In particular, it must not use parseInt, which would accept
+    // partial values such as "12x".
+    setRuntimeConfig(args.key, args.value);
+  } catch (err) {
+    return (err as Error).message;
   }
 
-  setRuntimeConfig(args.key, value);
-
   const config = getRuntimeConfig();
-  return `Config updated: ${args.key} = ${value}\n\nCurrent config: ${JSON.stringify(config, null, 2)}`;
+  return `Config updated: ${args.key} = ${config[args.key]}\n\nCurrent config: ${JSON.stringify(config, null, 2)}`;
 }

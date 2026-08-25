@@ -2,10 +2,10 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { CatalogEntry, CategoryIndex, EndpointDetail } from "./types.js";
+import { findProjectRoot } from "../project-root.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// When compiled: dist/src/catalog/ → need ../../../data to reach project root
-const DATA_DIR = join(__dirname, "..", "..", "..", "data");
+const DATA_DIR = join(findProjectRoot(__dirname), "data");
 
 let catalogCache: CatalogEntry[] | null = null;
 let categoriesCache: CategoryIndex | null = null;

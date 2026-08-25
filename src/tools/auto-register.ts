@@ -11,9 +11,10 @@ import { procoreApiCall } from "../api/client.js";
 import { buildDescription } from "./description-builder.js";
 import { enrichParamDescription } from "./param-descriptions.js";
 import { buildAnnotations, buildTitle } from "./annotation-builder.js";
+import { findProjectRoot } from "../project-root.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MANIFEST_PATH = join(__dirname, "..", "..", "..", "data", "tools-manifest.json");
+const MANIFEST_PATH = join(findProjectRoot(__dirname), "data", "tools-manifest.json");
 
 interface ToolParam {
   name: string;
@@ -49,7 +50,37 @@ interface ToolManifestEntry {
   versionSiblings?: Array<{ toolName: string; version: string }>;
 }
 
-function buildZodType(param: ToolParam, moduleName: string): z.ZodTypeAny {
+function multipartFileSchema(): z.ZodTypeAny {
+  return z
+    .object({
+      base64: z
+        .string()
+        .min(1)
+        .describe("File bytes encoded as base64 for an MCP JSON argument"),
+      filename: z
+        .string()
+        .optional()
+        .describe("Filename Procore should use for the upload"),
+      contentType: z
+        .string()
+        .optional()
+        .describe("MIME type of the uploaded file"),
+    })
+    .strict()
+    .describe(
+      "MCP file input. Pass base64 bytes plus an optional filename and MIME type."
+    );
+}
+
+function safeParamName(name: string): string {
+  return name.replace(/\[/g, "__").replace(/\]/g, "").replace(/\./g, "_");
+}
+
+function buildZodType(
+  param: ToolParam,
+  moduleName: string,
+  contentType?: string | null
+): z.ZodTypeAny {
   const desc = enrichParamDescription(
     param.name,
     param.description,
@@ -82,6 +113,23 @@ function buildZodType(param: ToolParam, moduleName: string): z.ZodTypeAny {
       }
   }
 
+  if (contentType === "multipart/form-data" && param.source === "body") {
+    // MCP arguments are JSON, so files use a small base64 descriptor instead
+    // of a browser File or Node Buffer. Ordinary strings remain accepted for
+    // fields that take an upload id or URL rather than file bytes.
+    if (param.type === "string") {
+      zodType = z
+        .union([zodType, multipartFileSchema()])
+        .describe(
+          `${desc}. For a file upload, pass {base64, filename?, contentType?}.`
+        );
+    } else if (param.type === "array" || param.type === "object") {
+      zodType = zodType.describe(
+        `${desc}. File items use {base64, filename?, contentType?}.`
+      );
+    }
+  }
+
   if (!param.required) {
     zodType = zodType.optional();
   }
@@ -96,7 +144,7 @@ function createToolHandler(entry: ToolManifestEntry) {
     const bodyObj: Record<string, unknown> = {};
 
     for (const param of entry.params) {
-      const value = args[param.name];
+      const value = args[safeParamName(param.name)];
       if (value === undefined || value === null) continue;
 
       switch (param.source) {
@@ -130,6 +178,9 @@ function createToolHandler(entry: ToolManifestEntry) {
         queryParams:
           Object.keys(queryParams).length > 0 ? queryParams : undefined,
         body,
+        contentType: entry.contentType,
+        page: typeof args.page === "number" ? args.page : undefined,
+        perPage: typeof args.per_page === "number" ? args.per_page : undefined,
       });
 
       const parts: string[] = [];
@@ -195,16 +246,14 @@ export function registerAutoTools(server: McpServer): number {
     const selectedParams = [...pathP, ...otherP.slice(0, 30)];
 
     for (const param of selectedParams) {
-      const safeName = param.name
-        .replace(/\[/g, "__")
-        .replace(/\]/g, "")
-        .replace(/\./g, "_");
+      const safeName = safeParamName(param.name);
       // The manifest already collapses duplicates; this guard keeps a stray
       // collision from silently replacing an earlier param's schema.
       if (shape[safeName]) continue;
       shape[safeName] = buildZodType(
         { ...param, name: safeName },
-        entry.module
+        entry.module,
+        entry.contentType
       );
     }
 

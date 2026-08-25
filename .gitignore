@@ -54,3 +54,4 @@ htmlcov/
 
 # Procore MCP specific
 specs/combined_OAS.json
+.procore-mcp/

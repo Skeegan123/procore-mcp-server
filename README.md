@@ -6,6 +6,8 @@ MCP server that exposes the full [Procore](https://www.procore.com/) REST API to
 
 Works with **Claude Desktop**, **Claude Code**, and any MCP-compatible client.
 
+This repository is a fork of [Tyler Ilunga's upstream project](https://github.com/TylerIlunga/procore-mcp-server). The original copyright and MIT license remain in force. Keep the notice in [LICENSE](LICENSE) when you redistribute this work.
+
 ## What it does
 
 A build-time parser converts Procore's OpenAPI spec into a compact catalog, then auto-generates individual MCP tools for every API operation. At runtime, 7 meta-tools let the AI discover and call any Procore endpoint:
@@ -22,7 +24,7 @@ A build-time parser converts Procore's OpenAPI spec into a compact catalog, then
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - A [Procore Developer Portal](https://developers.procore.com/) account
 - An OAuth app with **Authorization Code** grant type
 - Set your redirect URI to `http://localhost`
@@ -32,7 +34,7 @@ A build-time parser converts Procore's OpenAPI spec into a compact catalog, then
 ```bash
 git clone https://github.com/TylerIlunga/procore-mcp-server.git
 cd procore-mcp-server
-npm install
+npm ci
 ```
 
 Copy the example env file and fill in your credentials:
@@ -45,9 +47,13 @@ cp .env.example .env
 PROCORE_CLIENT_ID=your_client_id
 PROCORE_CLIENT_SECRET=your_client_secret
 PROCORE_COMPANY_ID=your_company_id
+PROCORE_ENV=production
+PROCORE_TOOL_MODE=meta
 ```
 
-By default the server exposes the **7 discovery tools**, and every Procore
+`PROCORE_ENV` is `production` by default. Set it to `sandbox` only when your Procore app and account are configured for the sandbox. Keep production and sandbox tokens in separate files. Tokens are stored at `~/.procore-mcp/tokens.json` by default; set `PROCORE_TOKEN_PATH` to an absolute path when you need another location. The token file contains credentials and must stay private.
+
+By default the server exposes the **7 compact meta tools**, including four read-only discovery tools and `procore_api_call`, and every Procore
 endpoint is reached through `procore_api_call`. Registering a dedicated tool
 per endpoint instead emits roughly 4.7 MB (~1.2M tokens) of tool definitions —
 more than any current model's context window — so that surface is opt-in:
@@ -60,19 +66,27 @@ Coverage is identical in both modes; only the size of the advertised tool list
 differs. If you switch to `all` and are migrating from before v2.0.0, see
 `data/tool-renames.json` for the old -> new tool name map.
 
-You'll need Procore's OpenAPI spec file placed at `specs/combined_OAS.json`. This file is not included in the repo due to its size (~54MB). You can obtain it from [Procore's API documentation](https://developers.procore.com/).
-
-Build the catalog and compile TypeScript:
+The generated catalog and endpoint details are committed, so a fresh clone does not need Procore's OpenAPI file. Validate the committed data and compile TypeScript with:
 
 ```bash
 npm run build
 ```
+
+Maintainers who have Procore's OpenAPI spec can refresh the generated data. Place the file at `specs/combined_OAS.json` (it is gitignored), then run:
+
+```bash
+npm run build:from-oas
+```
+
+The spec is not included in the repository because it is about 54 MB. Obtain it from [Procore's API documentation](https://developers.procore.com/). Review generated changes before committing them.
 
 Authenticate with Procore (opens browser for OAuth):
 
 ```bash
 npm run auth
 ```
+
+Run authentication as your normal user. Do not use `sudo npm run auth`; it can create root-owned files and expose credentials to the wrong account. The flow saves tokens with restrictive file permissions.
 
 Start the server:
 
@@ -89,12 +103,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
   "mcpServers": {
     "procore": {
       "command": "node",
-      "args": ["/absolute/path/to/procore-mcp-server/dist/src/index.js"],
-      "env": {
-        "PROCORE_CLIENT_ID": "your_client_id",
-        "PROCORE_CLIENT_SECRET": "your_client_secret",
-        "PROCORE_COMPANY_ID": "your_company_id"
-      }
+      "args": ["/absolute/path/to/procore-mcp-server/dist/src/index.js"]
     }
   }
 }
@@ -109,16 +118,41 @@ Add to `.mcp.json` in your project root:
   "mcpServers": {
     "procore": {
       "command": "node",
-      "args": ["/absolute/path/to/procore-mcp-server/dist/src/index.js"],
-      "env": {
-        "PROCORE_CLIENT_ID": "your_client_id",
-        "PROCORE_CLIENT_SECRET": "your_client_secret",
-        "PROCORE_COMPANY_ID": "your_company_id"
-      }
+      "args": ["/absolute/path/to/procore-mcp-server/dist/src/index.js"]
     }
   }
 }
 ```
+
+## Codex configuration
+
+Codex stores local MCP servers in `~/.codex/config.toml`. The ChatGPT desktop app, Codex CLI, and the IDE extension share this configuration. See the [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp) for client-specific options. After `npm run build`, add the following server entry. It keeps the compact `meta` tool surface and asks for approval before tools that are not read-only:
+
+```toml
+[mcp_servers.procore]
+command = "node"
+args = ["/absolute/path/to/procore-mcp-server/dist/src/index.js"]
+cwd = "/absolute/path/to/procore-mcp-server"
+enabled = true
+required = false
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+enabled_tools = [
+  "procore_discover_categories",
+  "procore_discover_endpoints",
+  "procore_search_endpoints",
+  "procore_get_endpoint_details",
+  "procore_api_call",
+  "procore_get_config",
+  "procore_set_config",
+]
+
+[mcp_servers.procore.env]
+PROCORE_TOOL_MODE = "meta"
+```
+
+Replace `/absolute/path/to/procore-mcp-server` with your clone's path. Keep client secrets and tokens in `.env` or another secret store, not in client configuration files. This server loads `.env` from the project directory. Restart Codex after saving the file and use `/mcp` to confirm that `procore` is connected. The `writes` approval mode is a default safety net. Review every `procore_api_call` that can change Procore data before approving it.
 
 ## Project structure
 
@@ -142,9 +176,9 @@ specs/        Source OAS file (gitignored — too large for the repo)
 
    Each generated tool carries a structured description covering what it acts on, when to reach for it, which parent ids to resolve first, what it returns, and how it fails. Endpoints Procore has deprecated are registered with their sunset date in the description and a `(Deprecated)` title. The interactive `/oauth/*` endpoints are not registered as tools — `npm run auth` owns that flow — but remain reachable through `procore_api_call`.
 
-2. **Auth**: Run `npm run auth` once to complete the OAuth flow in your browser. Tokens are saved to `~/.procore-mcp/tokens.json` and auto-refresh when expired.
+2. **Auth**: Run `npm run auth` once to complete the OAuth flow in your browser. Tokens are saved to `~/.procore-mcp/tokens.json` and auto-refresh when expired. `PROCORE_ENV=sandbox` uses the sandbox endpoints and should use a separate token path.
 
-3. **Runtime**: The MCP server loads the catalog and registers the 7 discovery tools (plus the full per-endpoint surface when `PROCORE_TOOL_MODE=all`). When an AI assistant calls a tool, the server maps it to the correct Procore API endpoint, injects auth headers, handles rate limits and pagination, and returns the response.
+3. **Runtime**: The MCP server loads the catalog and registers the 7 compact meta tools (plus the full per-endpoint surface when `PROCORE_TOOL_MODE=all`). Four meta tools read only the local catalog; `procore_api_call` reaches Procore and may change data. The server injects auth headers, handles rate limits, and returns pagination metadata.
 
 ## Inspiration
 

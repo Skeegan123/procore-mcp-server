@@ -1,15 +1,19 @@
 # Procore MCP Server
 
-> MCP server exposing the full Procore REST API for Claude Desktop and Claude Code. Single-user OAuth. TypeScript + @modelcontextprotocol/sdk.
+> MCP server exposing the Procore REST API to Codex and other MCP clients. Single-user OAuth. TypeScript + @modelcontextprotocol/sdk.
+
+This repository is a fork of [Tyler Ilunga's upstream project](https://github.com/TylerIlunga/procore-mcp-server). Preserve the original MIT notice and copyright in `LICENSE` when distributing changes.
 
 ## Quick Start
 
 ```bash
-npm install
-npm run build          # Generate catalog from OAS + compile TypeScript
+npm ci
+npm run build          # Validate committed catalog + compile TypeScript
 npm run auth           # One-time: OAuth flow to get Procore tokens
 npm start              # Start MCP server (stdio transport)
 ```
+
+`npm run build` works from a fresh clone because generated catalog data is committed. Maintainers with `specs/combined_OAS.json` can refresh that data with `npm run build:from-oas`; the OAS file is gitignored and is not required for normal development.
 
 ## Architecture
 
@@ -27,7 +31,7 @@ npm start              # Start MCP server (stdio transport)
 
 ### Build Pipeline
 
-`specs/combined_OAS.json` (~54MB) -> `scripts/generate-catalog.ts` -> `data/catalog.json` + `data/endpoint-details/` -> `scripts/generate-tools-manifest.ts` -> `data/tools-manifest.json`
+Maintainer-only `npm run build:from-oas`: `specs/combined_OAS.json` (~54MB) -> `scripts/generate-catalog.ts` -> `data/catalog.json` + `data/endpoint-details/` -> `scripts/generate-tools-manifest.ts` -> `data/tools-manifest.json`. Normal builds use the committed `data/` output.
 
 Current spec (2026-08-04): 3,155 operations -> 2,929 generated tools + 7 meta tools.
 The manifest drops older-version duplicates of the same path and the
@@ -152,8 +156,10 @@ one clause into the next.
 
 ### Auth Flow
 
-1. Run `npm run auth` -> opens browser -> Procore OAuth -> tokens saved to `~/.procore-mcp/tokens.json`
+1. Run `npm run auth` as a normal user -> opens browser -> Procore OAuth -> tokens saved to `~/.procore-mcp/tokens.json`
 2. MCP server reads tokens on startup, auto-refreshes when expired
+
+Do not run the auth command with `sudo`. Use a separate token path for sandbox credentials.
 
 ### Environment Variables
 
@@ -161,10 +167,17 @@ one clause into the next.
 PROCORE_CLIENT_ID     - OAuth client ID from Procore Developer Portal
 PROCORE_CLIENT_SECRET - OAuth client secret
 PROCORE_COMPANY_ID    - Default Procore company ID (integer)
-PROCORE_TOOL_MODE     - "meta" (default) serves only the 7 discovery tools;
+PROCORE_ENV           - "production" (default) or "sandbox"
+PROCORE_TOOL_MODE     - "meta" (default) serves only the 7 compact meta tools;
                         "all" additionally registers one tool per endpoint.
                         Coverage is identical either way — procore_api_call
                         reaches every endpoint in both modes.
+PROCORE_TOKEN_PATH    - Optional absolute path for tokens.json; defaults to
+                        ~/.procore-mcp/tokens.json
+PROCORE_REQUEST_TIMEOUT_MS - API call deadline in milliseconds; defaults to
+                             30000 and caps at 300000
+PROCORE_AUTH_TIMEOUT_MS    - OAuth exchange/refresh timeout in milliseconds;
+                             defaults to 30000 and caps at 300000
 ```
 
 ## Releasing
@@ -187,4 +200,4 @@ heredocs are easy to mangle.
 - TypeScript strict mode, ES2022 target, Node16 modules
 - Node built-in fetch (no axios)
 - File size limit: 300 lines per file
-- All env vars validated at startup
+- Credentials and request settings are validated before the operation that uses them

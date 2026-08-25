@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    name: Typecheck & manifest invariants
+    name: Build, test & dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +22,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: npx tsc --noEmit
-
-      # The source OAS (specs/) is gitignored, so CI verifies the committed
+      # The source OAS (specs/) is gitignored, so CI builds from the committed
       # catalog artifacts instead of regenerating them.
-      - name: Validate catalog
-        run: npm run validate
+      - name: Build from committed catalog
+        run: npm run build
 
       - name: Verify tools manifest invariants
         run: npm test
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
