@@ -4,10 +4,19 @@ import {
   loadEndpointDetail,
   findByOperationId,
 } from "./repository.js";
+import { isReadOnlyMode, isReadMethod } from "../api/read-only.js";
 import type { CatalogEntry, CategoryIndex, EndpointDetail } from "./types.js";
 
 export function getCategories(): CategoryIndex {
   return loadCategories();
+}
+
+/** Catalog entries visible to callers; write endpoints are hidden entirely
+ *  while read-only mode is active so the model never sees them offered. */
+function visibleEntries(): CatalogEntry[] {
+  const entries = loadCatalog();
+  if (!isReadOnlyMode()) return entries;
+  return entries.filter((e) => isReadMethod(e.method));
 }
 
 export function discoverEndpoints(options: {
@@ -16,7 +25,7 @@ export function discoverEndpoints(options: {
   search?: string;
   methodFilter?: string;
 }): CatalogEntry[] {
-  let entries = loadCatalog();
+  let entries = visibleEntries();
 
   if (options.category) {
     entries = entries.filter(
@@ -49,7 +58,7 @@ export function discoverEndpoints(options: {
 }
 
 export function searchEndpoints(query: string): CatalogEntry[] {
-  const catalog = loadCatalog();
+  const catalog = visibleEntries();
   const terms = query.toLowerCase().split(/\s+/);
 
   // Score each entry
@@ -81,11 +90,18 @@ export function searchEndpoints(query: string): CatalogEntry[] {
 export function getEndpointDetails(
   operationId: string
 ): EndpointDetail | null {
+  const entry = findByOperationId(operationId);
+  if (isReadOnlyMode() && entry && !isReadMethod(entry.method)) {
+    return null;
+  }
   return loadEndpointDetail(operationId);
 }
 
 export function getEndpointByOperationId(
   operationId: string
 ): CatalogEntry | undefined {
-  return findByOperationId(operationId);
+  const entry = findByOperationId(operationId);
+  if (!entry) return undefined;
+  if (isReadOnlyMode() && !isReadMethod(entry.method)) return undefined;
+  return entry;
 }

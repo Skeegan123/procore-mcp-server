@@ -15,6 +15,7 @@ const originalEnv = {
   tokenPath: process.env.PROCORE_TOKEN_PATH,
   clientId: process.env.PROCORE_CLIENT_ID,
   clientSecret: process.env.PROCORE_CLIENT_SECRET,
+  readOnly: process.env.PROCORE_READ_ONLY,
 };
 
 before(() => {
@@ -29,6 +30,9 @@ before(() => {
   process.env.PROCORE_TOKEN_PATH = tokenPath;
   process.env.PROCORE_CLIENT_ID = "test-client";
   process.env.PROCORE_CLIENT_SECRET = "test-secret";
+  // These tests exercise the write path directly; read-only enforcement has
+  // its own suite in test/read-only.test.ts.
+  process.env.PROCORE_READ_ONLY = "false";
 });
 
 after(() => {
@@ -39,6 +43,8 @@ after(() => {
   else process.env.PROCORE_CLIENT_ID = originalEnv.clientId;
   if (originalEnv.clientSecret === undefined) delete process.env.PROCORE_CLIENT_SECRET;
   else process.env.PROCORE_CLIENT_SECRET = originalEnv.clientSecret;
+  if (originalEnv.readOnly === undefined) delete process.env.PROCORE_READ_ONLY;
+  else process.env.PROCORE_READ_ONLY = originalEnv.readOnly;
   unlinkSync(tokenPath);
 });
 

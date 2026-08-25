@@ -49,9 +49,24 @@ PROCORE_CLIENT_SECRET=your_client_secret
 PROCORE_COMPANY_ID=your_company_id
 PROCORE_ENV=production
 PROCORE_TOOL_MODE=meta
+PROCORE_READ_ONLY=true
 ```
 
 `PROCORE_ENV` is `production` by default. Set it to `sandbox` only when your Procore app and account are configured for the sandbox. Keep production and sandbox tokens in separate files. Tokens are stored at `~/.procore-mcp/tokens.json` by default; set `PROCORE_TOKEN_PATH` to an absolute path when you need another location. The token file contains credentials and must stay private.
+
+**Read-only mode** (`PROCORE_READ_ONLY`) is **on by default**. While enabled the
+server serves GET requests only:
+
+- `procore_api_call` accepts only `method: "GET"`; any other method is rejected
+  before authentication or network activity, with a second enforcement layer in
+  the API client itself.
+- Discovery, search, and endpoint-detail tools list GET endpoints only, and
+  `PROCORE_TOOL_MODE=all` registers dedicated tools for GET endpoints only.
+
+Set `PROCORE_READ_ONLY=false` to restore full write access (POST/PUT/PATCH/DELETE).
+Note this is a server-level guard for requests made through the MCP tools; it
+cannot stop an agent that already has independent shell access from making its
+own network calls, so keep the token file private regardless.
 
 By default the server exposes the **7 compact meta tools**, including four read-only discovery tools and `procore_api_call`, and every Procore
 endpoint is reached through `procore_api_call`. Registering a dedicated tool

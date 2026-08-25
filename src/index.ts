@@ -7,6 +7,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { findProjectRoot } from "./project-root.js";
+import { isReadOnlyMode } from "./api/read-only.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = findProjectRoot(__dirname);
@@ -47,6 +48,12 @@ function loadEnv(): void {
 
 async function main(): Promise<void> {
   loadEnv();
+
+  if (isReadOnlyMode()) {
+    console.error(
+      "Read-only mode is ON: only GET requests are served. Set PROCORE_READ_ONLY=false to enable writes."
+    );
+  }
 
   // API tools validate credentials when called. Keeping startup available lets
   // the local discovery tools inspect the bundled catalog before authentication.

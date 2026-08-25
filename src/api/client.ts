@@ -7,6 +7,7 @@ import {
   parsePositiveSafeInteger,
   setRuntimeConfig,
 } from "./runtime-config.js";
+import { assertMethodAllowed } from "./read-only.js";
 import { buildQueryString, substitutePath } from "./path.js";
 import { buildMultipartBody, isMultipartContentType } from "./multipart.js";
 import {
@@ -39,6 +40,10 @@ export async function procoreApiCall(
 ): Promise<ProcoreApiResponse> {
   const { method, pathParams, queryParams, body, page, perPage } = options;
   let { path, companyId } = options;
+
+  // Enforce read-only mode before placeholder resolution, auth, or fetch.
+  assertMethodAllowed(method);
+
   const timeoutMs = getTimeoutMs(options.timeoutMs);
   const deadline = Date.now() + timeoutMs;
 

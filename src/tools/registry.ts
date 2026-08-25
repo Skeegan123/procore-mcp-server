@@ -7,6 +7,7 @@ import { handleApiCall } from "./handlers/api-call.js";
 import { handleSearchEndpoints } from "./handlers/search-endpoints.js";
 import { handleGetConfig } from "./handlers/get-config.js";
 import { handleSetConfig } from "./handlers/set-config.js";
+import { isReadOnlyMode } from "../api/read-only.js";
 
 /** The four discovery tools and get_config read only the catalog bundled with
  *  this server — no Procore request, no credentials, nothing observable
@@ -19,6 +20,10 @@ const LOCAL_READ_ONLY = {
 } as const;
 
 export function registerTools(server: McpServer): void {
+  const readOnly = isReadOnlyMode();
+  const readOnlyNote = readOnly
+    ? "Procore writes are guarded on this server for now because they cannot be easily undone, so only GET endpoints are listed."
+    : "";
   // 1. Discover Categories
   server.registerTool(
     "procore_discover_categories",
@@ -56,6 +61,7 @@ export function registerTools(server: McpServer): void {
         "Returns a JSON array of {operationId, summary, method, path}; feed an operationId to " +
         "procore_get_endpoint_details. Filters that match nothing return an empty array, not an error. " +
         "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost. " +
+        (readOnly ? readOnlyNote + " " : "") +
         "Step 2 of the workflow.",
       inputSchema: {
         category: z
@@ -121,32 +127,54 @@ export function registerTools(server: McpServer): void {
   );
 
   // 4. API Call (the core tool)
+  // In read-only mode the schema itself only accepts GET, so a non-GET call is
+  // rejected by input validation before it ever reaches the client — and the
+  // client enforces the same policy again as a second layer.
   server.registerTool(
     "procore_api_call",
     {
-      title: "Execute Any Procore API Call",
-      description:
-        "Executes any Procore REST API call. This is the only tool here that reaches Procore and the " +
-        "only one that can change data — resolve the exact method, path, and parameters with " +
-        "procore_get_endpoint_details first. " +
-        "WRITES ARE REAL: DELETE permanently removes the record, POST creates one, and PATCH/PUT " +
-        "overwrite fields, so confirm the target id before calling and prefer a GET to verify it exists. " +
-        "Handles OAuth from the saved tokens, substitutes {placeholders} from path_params, and rewrites " +
-        "double underscores in query keys into brackets (filters__status becomes filters[status]). " +
-        "company_id and project_id fall back to whatever procore_set_config holds when the path needs " +
-        "them and you omit them. " +
-        "Returns the parsed JSON response together with pagination and rate-limit metadata. Failures " +
-        "come back as an error payload carrying the HTTP status — commonly 401 when the token has " +
-        "expired, 403 without tool permission, 404 when an id does not resolve, 422 when the body fails " +
-        "validation, and 429 when the rate limit is exhausted. " +
-        "Step 4 of the workflow; this reaches every Procore endpoint, including any not exposed as a " +
-        "dedicated tool.",
+      title: readOnly
+        ? "Execute Procore API Read (GET)"
+        : "Execute Any Procore API Call",
+      description: readOnly
+        ? "Executes a read-only GET request against the Procore REST API. Procore writes are " +
+          "guarded on this server for now because they cannot be easily undone, so only GET " +
+          "requests are served and no other method is accepted. " +
+          "Resolve the exact path and parameters with procore_get_endpoint_details first. " +
+          "Handles OAuth from the saved tokens, substitutes {placeholders} from path_params, and rewrites " +
+          "double underscores in query keys into brackets (filters__status becomes filters[status]). " +
+          "company_id and project_id fall back to whatever procore_set_config holds when the path needs " +
+          "them and you omit them. " +
+          "Returns the parsed JSON response together with pagination and rate-limit metadata. Failures " +
+          "come back as an error payload carrying the HTTP status — commonly 401 when the token has " +
+          "expired, 403 without tool permission, 404 when an id does not resolve, and 429 when the rate " +
+          "limit is exhausted. " +
+          "Step 4 of the workflow; this reaches every read endpoint, including any not exposed as a " +
+          "dedicated tool. If a write seems necessary, stop and tell the user this server is read-only."
+        : "Executes any Procore REST API call. This is the only tool here that reaches Procore and the " +
+          "only one that can change data — resolve the exact method, path, and parameters with " +
+          "procore_get_endpoint_details first. " +
+          "WRITES ARE REAL: DELETE permanently removes the record, POST creates one, and PATCH/PUT " +
+          "overwrite fields, so confirm the target id before calling and prefer a GET to verify it exists. " +
+          "Handles OAuth from the saved tokens, substitutes {placeholders} from path_params, and rewrites " +
+          "double underscores in query keys into brackets (filters__status becomes filters[status]). " +
+          "company_id and project_id fall back to whatever procore_set_config holds when the path needs " +
+          "them and you omit them. " +
+          "Returns the parsed JSON response together with pagination and rate-limit metadata. Failures " +
+          "come back as an error payload carrying the HTTP status — commonly 401 when the token has " +
+          "expired, 403 without tool permission, 404 when an id does not resolve, 422 when the body fails " +
+          "validation, and 429 when the rate limit is exhausted. " +
+          "Step 4 of the workflow; this reaches every Procore endpoint, including any not exposed as a " +
+          "dedicated tool.",
       inputSchema: {
-        method: z
-          .enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
-          .describe(
-            "HTTP method for the endpoint, exactly as reported by the discovery tools"
-          ),
+        method: (readOnly
+          ? z.enum(["GET"])
+          : z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+        ).describe(
+          readOnly
+            ? "HTTP method for the endpoint. Only GET is available on this server."
+            : "HTTP method for the endpoint, exactly as reported by the discovery tools"
+        ),
         path: z
           .string()
           .describe(
@@ -196,12 +224,12 @@ export function registerTools(server: McpServer): void {
           .describe("Items per page, 1-100 (default 100)"),
       },
       annotations: {
-        title: "Procore API Call",
-        readOnlyHint: false,
-        // This tool can issue a DELETE, so the destructive path is genuinely
-        // reachable even though most calls through it are reads.
-        destructiveHint: true,
-        idempotentHint: false,
+        title: readOnly ? "Procore API Read" : "Procore API Call",
+        // In read-only mode every reachable call is a GET, so the tool is
+        // genuinely read-only and the hints say so.
+        readOnlyHint: readOnly,
+        destructiveHint: !readOnly,
+        idempotentHint: readOnly,
         openWorldHint: true,
       },
     },
@@ -227,7 +255,8 @@ export function registerTools(server: McpServer): void {
         "Returns a JSON array of {operationId, summary, method, path}; feed an operationId to " +
         "procore_get_endpoint_details to get its parameters. A term with no matches returns an empty " +
         "array, so retry with a broader or singular form before concluding the endpoint does not exist. " +
-        "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost.",
+        "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost." +
+        (readOnly ? " " + readOnlyNote : ""),
       inputSchema: {
         query: z
           .string()

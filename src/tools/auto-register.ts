@@ -8,6 +8,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { procoreApiCall } from "../api/client.js";
+import { isReadOnlyMode, isReadMethod } from "../api/read-only.js";
 import { buildDescription } from "./description-builder.js";
 import { enrichParamDescription } from "./param-descriptions.js";
 import { buildAnnotations, buildTitle } from "./annotation-builder.js";
@@ -238,6 +239,9 @@ export function registerAutoTools(server: McpServer): number {
 
   let registered = 0;
   for (const entry of manifest) {
+    // Read-only mode registers GET tools only; the client-side guard would
+    // reject the rest anyway, so they are never advertised.
+    if (isReadOnlyMode() && !isReadMethod(entry.method)) continue;
     const shape: ZodRawShape = {};
 
     // Include all path params (required) + first 30 query/body params
