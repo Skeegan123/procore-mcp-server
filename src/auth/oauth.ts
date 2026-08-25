@@ -1,4 +1,5 @@
 import { TokenData, readTokens, writeTokens, isTokenExpired } from "./token-store.js";
+import { writeUserTokens } from "./user-token-store.js";
 
 const DEFAULT_AUTH_TIMEOUT_MS = 30_000;
 const MAX_AUTH_TIMEOUT_MS = 5 * 60_000;
@@ -83,7 +84,8 @@ function tokenResponseToData(resp: TokenResponse): TokenData {
 
 export async function exchangeCodeForTokens(
   code: string,
-  redirectUri: string
+  redirectUri: string,
+  userKey?: string
 ): Promise<TokenData> {
   const { clientId, clientSecret } = getClientCredentials();
 
@@ -108,7 +110,14 @@ export async function exchangeCodeForTokens(
 
   const data = (await res.json()) as TokenResponse;
   const tokens = tokenResponseToData(data);
-  writeTokens(tokens);
+  // Hosted OAuth callback runs outside any request context, so the caller
+  // names the user explicitly. Inside a request context, writeTokens already
+  // targets the right user file.
+  if (userKey) {
+    writeUserTokens(userKey, tokens);
+  } else {
+    writeTokens(tokens);
+  }
   return tokens;
 }
 

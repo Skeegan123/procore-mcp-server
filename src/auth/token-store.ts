@@ -1,6 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import {
+  readUserTokens,
+  writeUserTokens,
+} from "./user-token-store.js";
+import { getRequestUserKey } from "./request-context.js";
 
 export interface TokenData {
   access_token: string;
@@ -18,6 +23,12 @@ function getTokenPath(): string {
 }
 
 export function readTokens(): TokenData | null {
+  // Hosted mode: the request context names the authenticated user, whose
+  // tokens live in their own file. Local stdio mode has no request context
+  // and keeps using the single legacy token file.
+  const userKey = getRequestUserKey();
+  if (userKey) return readUserTokens(userKey);
+
   const tokenPath = getTokenPath();
   try {
     const raw = readFileSync(tokenPath, "utf8");
@@ -32,6 +43,12 @@ export function readTokens(): TokenData | null {
 }
 
 export function writeTokens(tokens: TokenData): void {
+  const userKey = getRequestUserKey();
+  if (userKey) {
+    writeUserTokens(userKey, tokens);
+    return;
+  }
+
   const tokenPath = getTokenPath();
   const dir = dirname(tokenPath);
   mkdirSync(dir, { recursive: true, mode: 0o700 });

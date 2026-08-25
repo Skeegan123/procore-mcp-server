@@ -169,11 +169,40 @@ PROCORE_TOOL_MODE = "meta"
 
 Replace `/absolute/path/to/procore-mcp-server` with your clone's path. Keep client secrets and tokens in `.env` or another secret store, not in client configuration files. This server loads `.env` from the project directory. Restart Codex after saving the file and use `/mcp` to confirm that `procore` is connected. The `writes` approval mode is a default safety net. Review every `procore_api_call` that can change Procore data before approving it.
 
+## Hosted mode (remote MCP, per-user sign-in)
+
+`npm run start:http` serves the same tools over stateless Streamable HTTP with a built-in OAuth layer so every user signs in to **their own** Procore account — no shared service account:
+
+```
+GET  /.well-known/oauth-protected-resource    MCP auth discovery
+GET  /.well-known/oauth-authorization-server  OAuth metadata
+GET  /oauth/authorize                         redirects to Procore login
+GET  /oauth/callback                          Procore returns here
+POST /oauth/token                             code + PKCE → access token
+ANY  /mcp                                     MCP endpoint (Bearer token)
+GET  /healthz                                 liveness probe
+```
+
+Each request carries its own bearer token and user identity, so there are no sessions: requests can land on any instance behind a plain load balancer or on serverless infrastructure.
+
+Required environment (see `.env.example`):
+
+- `PROCORE_MCP_BASE_URL` — public HTTPS URL of the deployment.
+- `PROCORE_MCP_TOKEN_SECRET` — long random string used to sign access tokens.
+- `PROCORE_OAUTH_REDIRECT_URIS` — allowlisted redirect URIs for MCP clients.
+- Add `https://<your-host>/oauth/callback` as a redirect URI on your Procore app in the Developer Portal.
+
+Per-user Procore tokens are stored as files under `PROCORE_USER_TOKEN_DIR` (default `~/.procore-mcp/users`). For multi-instance or serverless deployments where local disk is ephemeral, replace `src/auth/user-token-store.ts` with an S3/DynamoDB backend — callers only use its four functions.
+
+To publish to ChatGPT Business/Enterprise web: admin enables developer mode under Workspace settings → Apps, creates a custom connector pointing at `https://<your-host>/mcp`, completes the OAuth sign-in as themselves, tests it, then publishes it workspace-wide.
+
+Read-only mode applies to hosted mode too and stays on by default; keep it on unless you have reviewed what writes you want non-technical users triggering.
+
 ## Project structure
 
 ```
 src/
-  auth/       OAuth token exchange, refresh, storage
+  auth/       OAuth token exchange, refresh, storage (single-user + hosted per-user)
   api/        HTTP client with auth, rate limits, retries
   catalog/    Endpoint catalog loading, search, filtering
   tools/      MCP tool handlers and registration

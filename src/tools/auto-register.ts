@@ -2,8 +2,8 @@
  * Auto-registers individual MCP tools from the tools manifest.
  * Each endpoint in the manifest becomes a dedicated, named tool.
  */
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z, ZodRawShape } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -101,7 +101,7 @@ function buildZodType(
       zodType = z.array(z.unknown()).describe(desc);
       break;
     case "object":
-      zodType = z.record(z.unknown()).describe(desc);
+      zodType = z.record(z.string(), z.unknown()).describe(desc);
       break;
     default:
       if (param.enum && param.enum.length > 0 && param.enum.length <= 20) {
@@ -242,7 +242,7 @@ export function registerAutoTools(server: McpServer): number {
     // Read-only mode registers GET tools only; the client-side guard would
     // reject the rest anyway, so they are never advertised.
     if (isReadOnlyMode() && !isReadMethod(entry.method)) continue;
-    const shape: ZodRawShape = {};
+    const shape: Record<string, z.ZodType> = {};
 
     // Include all path params (required) + first 30 query/body params
     const pathP = entry.params.filter((p) => p.source === "path");
@@ -288,12 +288,13 @@ export function registerAutoTools(server: McpServer): number {
     );
 
     try {
+      /* @mcp-codemod-error Could not verify `inputSchema` is a schema object. Raw shapes are deprecated in v2 — pass a Standard Schema object (e.g. z.object({ … })); no change is needed if it already is one. */
       server.registerTool(
         entry.toolName,
         {
           title: buildTitle(entry.summary, entry.deprecated),
           description,
-          inputSchema: shape,
+          inputSchema: z.object(shape),
           annotations,
         },
         createToolHandler(entry)

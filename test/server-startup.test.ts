@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Client } from "@modelcontextprotocol/client";
 
 test("local meta tools start without Procore credentials or tokens", async (t) => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");

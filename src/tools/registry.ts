@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { handleDiscoverCategories } from "./handlers/discover-categories.js";
 import { handleDiscoverEndpoints } from "./handlers/discover-endpoints.js";
@@ -38,7 +38,7 @@ export function registerTools(server: McpServer): void {
         "Reads the catalog bundled with this server, so it makes no Procore request and needs no " +
         "authentication — it cannot fail with 401/403 and costs no rate limit. " +
         "Step 1 of the discover -> detail -> call workflow.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { title: "Discover API Categories", ...LOCAL_READ_ONLY },
     },
     async () => {
@@ -63,32 +63,32 @@ export function registerTools(server: McpServer): void {
         "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost. " +
         (readOnly ? readOnlyNote + " " : "") +
         "Step 2 of the workflow.",
-      inputSchema: {
-        category: z
-          .string()
-          .optional()
-          .describe(
-            "Top-level category, exactly as returned by procore_discover_categories, e.g. 'Project Management', 'Core', 'Construction Financials'"
-          ),
-        module: z
-          .string()
-          .optional()
-          .describe(
-            "Module within the category, e.g. 'RFI', 'Submittals', 'Punch List'. Ignored unless category is also given."
-          ),
-        search: z
-          .string()
-          .optional()
-          .describe(
-            "Case-insensitive substring matched against endpoint summary text; combine with category to narrow a large module"
-          ),
-        method_filter: z
-          .enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
-          .optional()
-          .describe(
-            "Restrict results to a single HTTP method — useful to list only the reads (GET) in a module"
-          ),
-      },
+      inputSchema: z.object({
+              category: z
+                .string()
+                .optional()
+                .describe(
+                  "Top-level category, exactly as returned by procore_discover_categories, e.g. 'Project Management', 'Core', 'Construction Financials'"
+                ),
+              module: z
+                .string()
+                .optional()
+                .describe(
+                  "Module within the category, e.g. 'RFI', 'Submittals', 'Punch List'. Ignored unless category is also given."
+                ),
+              search: z
+                .string()
+                .optional()
+                .describe(
+                  "Case-insensitive substring matched against endpoint summary text; combine with category to narrow a large module"
+                ),
+              method_filter: z
+                .enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+                .optional()
+                .describe(
+                  "Restrict results to a single HTTP method — useful to list only the reads (GET) in a module"
+                ),
+            }),
       annotations: { title: "Discover Endpoints", ...LOCAL_READ_ONLY },
     },
     async (args) => {
@@ -111,13 +111,13 @@ export function registerTools(server: McpServer): void {
         "return; an unrecognized operation_id comes back as a not-found message rather than an error. " +
         "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost. " +
         "Step 3 of the workflow.",
-      inputSchema: {
-        operation_id: z
-          .string()
-          .describe(
-            "The exact operationId from procore_discover_endpoints or procore_search_endpoints, e.g. 'RestV10ProjectsProjectIdRfisGet'. Case-sensitive; not a URL path."
-          ),
-      },
+      inputSchema: z.object({
+              operation_id: z
+                .string()
+                .describe(
+                  "The exact operationId from procore_discover_endpoints or procore_search_endpoints, e.g. 'RestV10ProjectsProjectIdRfisGet'. Case-sensitive; not a URL path."
+                ),
+            }),
       annotations: { title: "Get Endpoint Details", ...LOCAL_READ_ONLY },
     },
     async (args) => {
@@ -166,63 +166,63 @@ export function registerTools(server: McpServer): void {
           "validation, and 429 when the rate limit is exhausted. " +
           "Step 4 of the workflow; this reaches every Procore endpoint, including any not exposed as a " +
           "dedicated tool.",
-      inputSchema: {
-        method: (readOnly
-          ? z.enum(["GET"])
-          : z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
-        ).describe(
-          readOnly
-            ? "HTTP method for the endpoint. Only GET is available on this server."
-            : "HTTP method for the endpoint, exactly as reported by the discovery tools"
-        ),
-        path: z
-          .string()
-          .describe(
-            "API path with placeholders left intact, e.g. '/rest/v1.0/projects/{project_id}/rfis'. Supply the values via path_params rather than interpolating them here."
-          ),
-        path_params: z
-          .record(z.string())
-          .optional()
-          .describe(
-            "Values substituted into the path's {placeholders}, e.g. { project_id: '12345' }. Required whenever the path contains a placeholder that procore_set_config does not already supply."
-          ),
-        query_params: z
-          .record(z.union([z.string(), z.number(), z.boolean()]))
-          .optional()
-          .describe(
-            "Query-string parameters. Use double underscores for Procore's bracket syntax: filters__status becomes filters[status]."
-          ),
-        body: z
-          .record(z.unknown())
-          .optional()
-          .describe(
-            "Request body for POST/PUT/PATCH. For multipart file fields, pass {base64, filename?, contentType?}; use the exact nesting from procore_get_endpoint_details. Ignored on GET and DELETE."
-          ),
-        content_type: z
-          .enum([
-            "application/json",
-            "application/merge-patch+json",
-            "multipart/form-data",
-          ])
-          .optional()
-          .describe(
-            "Request media type reported by procore_get_endpoint_details. Defaults to application/json when a body is present."
-          ),
-        company_id: z
-          .number()
-          .optional()
-          .describe(
-            "Overrides the Procore-Company-Id header for this call only; defaults to the configured company"
-          ),
-        page: z
-          .number()
-          .optional()
-          .describe("1-indexed page number for paginated endpoints (default 1)"),
-        per_page: z
-          .number()
-          .optional()
-          .describe("Items per page, 1-100 (default 100)"),
-      },
+      inputSchema: z.object({
+              method: (readOnly
+                ? z.enum(["GET"])
+                : z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+              ).describe(
+                readOnly
+                  ? "HTTP method for the endpoint. Only GET is available on this server."
+                  : "HTTP method for the endpoint, exactly as reported by the discovery tools"
+              ),
+              path: z
+                .string()
+                .describe(
+                  "API path with placeholders left intact, e.g. '/rest/v1.0/projects/{project_id}/rfis'. Supply the values via path_params rather than interpolating them here."
+                ),
+              path_params: z
+                .record(z.string(), z.string())
+                .optional()
+                .describe(
+                  "Values substituted into the path's {placeholders}, e.g. { project_id: '12345' }. Required whenever the path contains a placeholder that procore_set_config does not already supply."
+                ),
+              query_params: z
+                .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+                .optional()
+                .describe(
+                  "Query-string parameters. Use double underscores for Procore's bracket syntax: filters__status becomes filters[status]."
+                ),
+              body: z
+                .record(z.string(), z.unknown())
+                .optional()
+                .describe(
+                  "Request body for POST/PUT/PATCH. For multipart file fields, pass {base64, filename?, contentType?}; use the exact nesting from procore_get_endpoint_details. Ignored on GET and DELETE."
+                ),
+              content_type: z
+                .enum([
+                  "application/json",
+                  "application/merge-patch+json",
+                  "multipart/form-data",
+                ])
+                .optional()
+                .describe(
+                  "Request media type reported by procore_get_endpoint_details. Defaults to application/json when a body is present."
+                ),
+              company_id: z
+                .number()
+                .optional()
+                .describe(
+                  "Overrides the Procore-Company-Id header for this call only; defaults to the configured company"
+                ),
+              page: z
+                .number()
+                .optional()
+                .describe("1-indexed page number for paginated endpoints (default 1)"),
+              per_page: z
+                .number()
+                .optional()
+                .describe("Items per page, 1-100 (default 100)"),
+            }),
       annotations: {
         title: readOnly ? "Procore API Read" : "Procore API Call",
         // In read-only mode every reachable call is a GET, so the tool is
@@ -257,13 +257,13 @@ export function registerTools(server: McpServer): void {
         "array, so retry with a broader or singular form before concluding the endpoint does not exist. " +
         "Reads the bundled catalog: no Procore request, no authentication, no rate-limit cost." +
         (readOnly ? " " + readOnlyNote : ""),
-      inputSchema: {
-        query: z
-          .string()
-          .describe(
-            "Search term matched against endpoint summaries, tags, and paths, e.g. 'RFI', 'budget', 'punch list'. Single keywords match more broadly than phrases."
-          ),
-      },
+      inputSchema: z.object({
+              query: z
+                .string()
+                .describe(
+                  "Search term matched against endpoint summaries, tags, and paths, e.g. 'RFI', 'budget', 'punch list'. Single keywords match more broadly than phrases."
+                ),
+            }),
       annotations: { title: "Search Endpoints", ...LOCAL_READ_ONLY },
     },
     async (args) => {
@@ -286,7 +286,7 @@ export function registerTools(server: McpServer): void {
         "Never returns token values or the client secret — only whether credentials are present. " +
         "Takes no arguments and returns a JSON object. Reads local process state, so it makes no " +
         "Procore request. Pair with procore_set_config to change any of it.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { title: "Show Config", ...LOCAL_READ_ONLY },
     },
     async () => {
@@ -314,18 +314,18 @@ export function registerTools(server: McpServer): void {
         "lost on restart. Setting the same value twice is a no-op, and nothing in Procore is modified: " +
         "this only changes which ids this server fills in for you. " +
         "Returns a confirmation plus the full updated configuration.",
-      inputSchema: {
-        key: z
-          .enum(["company_id", "project_id"])
-          .describe(
-            "Which default to set. These are the only accepted keys; any other value is rejected."
-          ),
-        value: z
-          .string()
-          .describe(
-            "The ID to store as complete decimal digits (e.g. '12345'). It must be a positive safe integer; partial strings such as '12x', zero, negatives, decimals, and values above 9007199254740991 are rejected."
-          ),
-      },
+      inputSchema: z.object({
+              key: z
+                .enum(["company_id", "project_id"])
+                .describe(
+                  "Which default to set. These are the only accepted keys; any other value is rejected."
+                ),
+              value: z
+                .string()
+                .describe(
+                  "The ID to store as complete decimal digits (e.g. '12345'). It must be a positive safe integer; partial strings such as '12x', zero, negatives, decimals, and values above 9007199254740991 are rejected."
+                ),
+            }),
       annotations: {
         title: "Set Config",
         readOnlyHint: false,
