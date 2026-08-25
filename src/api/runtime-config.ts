@@ -1,3 +1,5 @@
+import { getRequestUserKey } from "../auth/request-context.js";
+
 const RUNTIME_ID_KEYS = new Set(["company_id", "project_id"]);
 const POSITIVE_INTEGER_STRING = /^[1-9]\d*$/;
 
@@ -36,23 +38,53 @@ export function getDefaultCompanyId(): number | null {
   return id ? parsePositiveSafeInteger(id, "PROCORE_COMPANY_ID") : null;
 }
 
-// In-memory runtime config store (set via the procore_set_config tool).
-let runtimeConfig: RuntimeConfig = {};
+// In-memory runtime config stores (set via the procore_set_config tool).
+// Stdio has no request user and keeps the original process-local behavior.
+// Hosted requests are keyed by the authenticated user so one user's defaults
+// can never be observed or used by another user's request.
+let localRuntimeConfig: RuntimeConfig = {};
+const userRuntimeConfigs = new Map<string, RuntimeConfig>();
+
+function currentRuntimeConfig(): RuntimeConfig {
+  const userKey = getRequestUserKey();
+  if (userKey === undefined) return localRuntimeConfig;
+
+  let config = userRuntimeConfigs.get(userKey);
+  if (!config) {
+    config = {};
+    userRuntimeConfigs.set(userKey, config);
+  }
+  return config;
+}
 
 export function getRuntimeConfig(): RuntimeConfig {
-  return { ...runtimeConfig };
+  const userKey = getRequestUserKey();
+  const config =
+    userKey === undefined
+      ? localRuntimeConfig
+      : userRuntimeConfigs.get(userKey);
+  return { ...(config || {}) };
 }
 
 export function setRuntimeConfig(key: string, value: string | number): void {
+  const config = currentRuntimeConfig();
   if (isRuntimeIdKey(key)) {
-    runtimeConfig[key] = parsePositiveSafeInteger(value, key);
+    config[key] = parsePositiveSafeInteger(value, key);
     return;
   }
 
-  runtimeConfig[key] = value;
+  config[key] = value;
 }
 
-/** Clears process-local defaults. Intended for controlled resets and tests. */
+/**
+ * Clears defaults for the current request user. In stdio mode, where there is
+ * no request user, this clears the legacy process-local defaults.
+ */
 export function clearRuntimeConfig(): void {
-  runtimeConfig = {};
+  const userKey = getRequestUserKey();
+  if (userKey === undefined) {
+    localRuntimeConfig = {};
+    return;
+  }
+  userRuntimeConfigs.delete(userKey);
 }

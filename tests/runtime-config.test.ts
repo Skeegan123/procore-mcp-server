@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, beforeEach, test } from "node:test";
+import { after, afterEach, beforeEach, test } from "node:test";
 import {
   mkdirSync,
   mkdtempSync,
@@ -16,28 +16,33 @@ import {
   procoreApiCall,
   setRuntimeConfig,
 } from "../src/api/client.js";
+import { runAsUser } from "../src/auth/request-context.js";
+import { writeUserTokens } from "../src/auth/user-token-store.js";
 
 const originalFetch = globalThis.fetch;
 const originalTokenPath = process.env.PROCORE_TOKEN_PATH;
 const originalCompanyId = process.env.PROCORE_COMPANY_ID;
+const originalUserTokenDir = process.env.PROCORE_USER_TOKEN_DIR;
 const tokenDirectory = mkdtempSync(join(tmpdir(), "procore-runtime-config-"));
 const tokenPath = join(tokenDirectory, "tokens.json");
+const userTokenDirectory = join(tokenDirectory, "users");
 const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+const testUserKeys = ["runtime-config-user-a", "runtime-config-user-b"];
 
 beforeEach(() => {
   clearRuntimeConfig();
   fetchCalls.length = 0;
   process.env.PROCORE_TOKEN_PATH = tokenPath;
+  process.env.PROCORE_USER_TOKEN_DIR = userTokenDirectory;
   process.env.PROCORE_COMPANY_ID = "456";
   mkdirSync(tokenDirectory, { recursive: true });
-  writeFileSync(
-    tokenPath,
-    JSON.stringify({
-      access_token: "test-access-token",
-      refresh_token: "test-refresh-token",
-      expires_at: Date.now() + 60 * 60 * 1000,
-    })
-  );
+  const tokens = {
+    access_token: "test-access-token",
+    refresh_token: "test-refresh-token",
+    expires_at: Date.now() + 60 * 60 * 1000,
+  };
+  writeFileSync(tokenPath, JSON.stringify(tokens));
+  for (const userKey of testUserKeys) writeUserTokens(userKey, tokens);
   globalThis.fetch = async (input, init) => {
     fetchCalls.push({ input, init });
     return new Response(JSON.stringify({ ok: true }), {
@@ -47,10 +52,20 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => {
+  // clearRuntimeConfig is deliberately scoped to the current request user.
+  // Reset every test user explicitly so a failed test cannot affect a later
+  // test while preserving the production isolation semantics.
+  for (const userKey of testUserKeys) {
+    runAsUser(userKey, () => clearRuntimeConfig());
+  }
+});
+
 after(() => {
   clearRuntimeConfig();
   globalThis.fetch = originalFetch;
   restoreEnv("PROCORE_TOKEN_PATH", originalTokenPath);
+  restoreEnv("PROCORE_USER_TOKEN_DIR", originalUserTokenDir);
   restoreEnv("PROCORE_COMPANY_ID", originalCompanyId);
   rmSync(tokenDirectory, { recursive: true, force: true });
 });
@@ -142,4 +157,52 @@ test("get_config identifies process-local runtime overrides", async () => {
   assert.match(config, /Company ID source: runtime override \(process-local\)/);
   assert.match(config, /Default Project ID: 4567/);
   assert.match(config, /apply only to this server process and are lost on restart/);
+});
+
+test("hosted runtime defaults are isolated per authenticated user", async () => {
+  await runAsUser(testUserKeys[0], async () => {
+    await handleSetConfig({ key: "company_id", value: "111" });
+    await handleSetConfig({ key: "project_id", value: "222" });
+
+    await procoreApiCall({
+      method: "GET",
+      path: "/rest/v1.0/companies/{company_id}/projects/{project_id}/rfis",
+    });
+    assert.equal(
+      requestUrl(),
+      "https://api.procore.com/rest/v1.0/companies/111/projects/222/rfis"
+    );
+    assert.equal(requestHeaders()["Procore-Company-Id"], "111");
+  });
+
+  fetchCalls.length = 0;
+  await runAsUser(testUserKeys[1], async () => {
+    assert.deepEqual(getRuntimeConfig(), {});
+    await handleSetConfig({ key: "company_id", value: "333" });
+    await handleSetConfig({ key: "project_id", value: "444" });
+
+    await procoreApiCall({
+      method: "GET",
+      path: "/rest/v1.0/companies/{company_id}/projects/{project_id}/rfis",
+    });
+    assert.equal(
+      requestUrl(),
+      "https://api.procore.com/rest/v1.0/companies/333/projects/444/rfis"
+    );
+    assert.equal(requestHeaders()["Procore-Company-Id"], "333");
+  });
+
+  await runAsUser(testUserKeys[0], () => {
+    assert.deepEqual(getRuntimeConfig(), { company_id: 111, project_id: 222 });
+  });
+});
+
+test("no request context keeps the legacy process-local runtime defaults", async () => {
+  await handleSetConfig({ key: "company_id", value: "555" });
+  await handleSetConfig({ key: "project_id", value: "666" });
+
+  assert.deepEqual(getRuntimeConfig(), { company_id: 555, project_id: 666 });
+  await runAsUser(testUserKeys[0], () => {
+    assert.deepEqual(getRuntimeConfig(), {});
+  });
 });

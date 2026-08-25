@@ -171,6 +171,9 @@ Replace `/absolute/path/to/procore-mcp-server` with your clone's path. Keep clie
 
 ## Hosted mode (remote MCP, per-user sign-in)
 
+> Full walkthrough — local testing steps, tunnel testing, container deployment, and
+> the security model — lives in [`docs/hosted-deployment.md`](docs/hosted-deployment.md).
+
 `npm run start:http` serves the same tools over stateless Streamable HTTP with a built-in OAuth layer so every user signs in to **their own** Procore account — no shared service account:
 
 ```

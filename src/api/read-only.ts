@@ -1,4 +1,4 @@
-const READ_METHODS = new Set(["GET", "HEAD"]);
+const READ_METHODS = new Set(["GET"]);
 const DISABLED_VALUES = new Set(["false", "0", "no", "off"]);
 
 /**

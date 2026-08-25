@@ -72,10 +72,10 @@ test("PROCORE_READ_ONLY=false and equivalents disable read-only mode", () => {
   }
 });
 
-test("non-GET methods are rejected before any auth or network work", async () => {
+test("non-GET methods, including HEAD, are rejected before any auth or network work", async () => {
   delete process.env.PROCORE_READ_ONLY;
 
-  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+  for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
     await assert.rejects(
       procoreApiCall({ method, path: "/rest/v1.0/test" }),
       (err: Error) => {

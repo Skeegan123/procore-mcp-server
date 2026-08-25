@@ -1,5 +1,6 @@
 import { TokenData, readTokens, writeTokens, isTokenExpired } from "./token-store.js";
 import { writeUserTokens } from "./user-token-store.js";
+import { getRequestUserKey } from "./request-context.js";
 
 const DEFAULT_AUTH_TIMEOUT_MS = 30_000;
 const MAX_AUTH_TIMEOUT_MS = 5 * 60_000;
@@ -121,7 +122,11 @@ export async function exchangeCodeForTokens(
   return tokens;
 }
 
-let refreshInFlight: Promise<TokenData> | null = null;
+// Refreshes must be deduplicated per identity. Hosted requests use
+// AsyncLocalStorage to select their token file; sharing one promise across
+// users would make a caller receive another user's refreshed access token.
+// `undefined` is the explicit local/stdio bucket.
+const refreshInFlight = new Map<string | undefined, Promise<TokenData>>();
 
 async function performTokenRefresh(timeoutMs?: number): Promise<TokenData> {
   const current = readTokens();
@@ -167,12 +172,17 @@ async function performTokenRefresh(timeoutMs?: number): Promise<TokenData> {
 }
 
 export function refreshAccessToken(timeoutMs?: number): Promise<TokenData> {
-  if (!refreshInFlight) {
-    refreshInFlight = performTokenRefresh(timeoutMs).finally(() => {
-      refreshInFlight = null;
-    });
-  }
-  return refreshInFlight;
+  const userKey = getRequestUserKey();
+  const existing = refreshInFlight.get(userKey);
+  if (existing) return existing;
+
+  const refresh = performTokenRefresh(timeoutMs).finally(() => {
+    if (refreshInFlight.get(userKey) === refresh) {
+      refreshInFlight.delete(userKey);
+    }
+  });
+  refreshInFlight.set(userKey, refresh);
+  return refresh;
 }
 
 export async function getValidAccessToken(timeoutMs?: number): Promise<string> {

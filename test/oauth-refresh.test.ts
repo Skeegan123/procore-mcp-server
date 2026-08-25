@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { getValidAccessToken } from "../src/auth/oauth.js";
 import { writeTokens } from "../src/auth/token-store.js";
+import { runAsUser } from "../src/auth/request-context.js";
+import { readUserTokens, writeUserTokens } from "../src/auth/user-token-store.js";
 
 test("concurrent callers share one rotating-token refresh", async (t) => {
   const tokenDir = mkdtempSync(join(tmpdir(), "procore-mcp-refresh-"));
@@ -56,6 +58,77 @@ test("concurrent callers share one rotating-token refresh", async (t) => {
 
   assert.deepEqual(tokens, ["fresh", "fresh", "fresh"]);
   assert.equal(refreshCalls, 1);
+});
+
+test("concurrent hosted users refresh and persist only their own tokens", async (t) => {
+  const tokenDir = mkdtempSync(join(tmpdir(), "procore-mcp-user-refresh-"));
+  const previous = {
+    clientId: process.env.PROCORE_CLIENT_ID,
+    clientSecret: process.env.PROCORE_CLIENT_SECRET,
+    userTokenDir: process.env.PROCORE_USER_TOKEN_DIR,
+  };
+  const originalFetch = globalThis.fetch;
+
+  process.env.PROCORE_CLIENT_ID = "client";
+  process.env.PROCORE_CLIENT_SECRET = "secret";
+  process.env.PROCORE_USER_TOKEN_DIR = tokenDir;
+  writeUserTokens("user-1", {
+    access_token: "expired-user-1",
+    refresh_token: "refresh-user-1",
+    expires_at: Date.now() - 1,
+  });
+  writeUserTokens("user-2", {
+    access_token: "expired-user-2",
+    refresh_token: "refresh-user-2",
+    expires_at: Date.now() - 1,
+  });
+
+  const refreshCalls: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const refreshToken = new URLSearchParams(String(init?.body ?? "")).get(
+      "refresh_token"
+    );
+    assert.ok(refreshToken);
+    refreshCalls.push(refreshToken);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const user = refreshToken.replace("refresh-", "");
+    return new Response(
+      JSON.stringify({
+        access_token: `fresh-${user}`,
+        refresh_token: `rotated-${user}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        created_at: Math.floor(Date.now() / 1000),
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    restoreEnv("PROCORE_CLIENT_ID", previous.clientId);
+    restoreEnv("PROCORE_CLIENT_SECRET", previous.clientSecret);
+    restoreEnv("PROCORE_USER_TOKEN_DIR", previous.userTokenDir);
+    rmSync(tokenDir, { recursive: true, force: true });
+  });
+
+  const [user1Token, user2Token] = await Promise.all([
+    runAsUser("user-1", () => getValidAccessToken()),
+    runAsUser("user-2", () => getValidAccessToken()),
+  ]);
+
+  assert.deepEqual([user1Token, user2Token], ["fresh-user-1", "fresh-user-2"]);
+  assert.deepEqual(refreshCalls.sort(), ["refresh-user-1", "refresh-user-2"]);
+  const user1Tokens = readUserTokens("user-1");
+  const user2Tokens = readUserTokens("user-2");
+  assert.ok(user1Tokens);
+  assert.ok(user2Tokens);
+  assert.equal(user1Tokens.access_token, "fresh-user-1");
+  assert.equal(user1Tokens.refresh_token, "rotated-user-1");
+  assert.equal(user2Tokens.access_token, "fresh-user-2");
+  assert.equal(user2Tokens.refresh_token, "rotated-user-2");
+  assert.notEqual(user1Tokens.access_token, user2Tokens.access_token);
+  assert.notEqual(user1Tokens.refresh_token, user2Tokens.refresh_token);
 });
 
 test("token refresh has a bounded timeout", async (t) => {

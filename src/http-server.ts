@@ -38,6 +38,32 @@ import {
  */
 
 const DEFAULT_PORT = 8787;
+const DEFAULT_MAX_BODY_BYTES = 64 * 1024;
+const DEFAULT_BODY_READ_TIMEOUT_MS = 10_000;
+
+class RequestBodyError extends Error {
+  constructor(
+    readonly statusCode: 408 | 413,
+    readonly errorCode: "request_timeout" | "payload_too_large",
+    message: string
+  ) {
+    super(message);
+    this.name = "RequestBodyError";
+  }
+}
+
+function positiveEnvInteger(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function maxBodyBytes(): number {
+  return positiveEnvInteger("PROCORE_MCP_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES);
+}
+
+function bodyReadTimeoutMs(): number {
+  return positiveEnvInteger("PROCORE_MCP_BODY_TIMEOUT_MS", DEFAULT_BODY_READ_TIMEOUT_MS);
+}
 
 function baseUrl(): string {
   const raw = process.env.PROCORE_MCP_BASE_URL || `http://localhost:${DEFAULT_PORT}`;
@@ -83,9 +109,92 @@ function bearerToken(req: IncomingMessage): string | null {
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
+  const limit = maxBodyBytes();
+  const declaredLength = req.headers["content-length"];
+  const declaredBytes = typeof declaredLength === "string" ? Number(declaredLength) : null;
+  if (declaredBytes !== null && Number.isFinite(declaredBytes) && declaredBytes > limit) {
+    // Keep the connection usable when the client declared an oversized body.
+    // The top-level handler closes it after sending the 413 if it is still
+    // incomplete; resume() prevents unread bytes from blocking the parser.
+    req.resume();
+    throw new RequestBodyError(
+      413,
+      "payload_too_large",
+      `Request body exceeds the ${limit}-byte limit.`
+    );
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+      req.off("close", onClose);
+    };
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    const rejectWith = (error: Error) => {
+      finish(() => reject(error));
+      // Once the body is known to be unusable, discard it without retaining
+      // data. The server callback will close an incomplete request after the
+      // error response has flushed.
+      req.resume();
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > limit) {
+        rejectWith(
+          new RequestBodyError(
+            413,
+            "payload_too_large",
+            `Request body exceeds the ${limit}-byte limit.`
+          )
+        );
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => finish(() => resolve(Buffer.concat(chunks).toString("utf8")));
+    const onError = (error: Error) => finish(() => reject(error));
+    const onAborted = () =>
+      rejectWith(new RequestBodyError(408, "request_timeout", "The request body was aborted."));
+    const onClose = () => {
+      if (!req.complete) {
+        rejectWith(new RequestBodyError(408, "request_timeout", "The request body was incomplete."));
+      }
+    };
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    req.on("aborted", onAborted);
+    req.on("close", onClose);
+    timer = setTimeout(() => {
+      rejectWith(
+        new RequestBodyError(
+          408,
+          "request_timeout",
+          `Request body was not received within ${bodyReadTimeoutMs()}ms.`
+        )
+      );
+    }, bodyReadTimeoutMs());
+    timer.unref();
+  });
 }
 
 export function startHttpServer(): ReturnType<typeof createServer> {
@@ -129,6 +238,24 @@ export function startHttpServer(): ReturnType<typeof createServer> {
     try {
       await route(req, res, mcpNodeHandler);
     } catch (err) {
+      if (err instanceof RequestBodyError) {
+        const closeAfterResponse = !req.complete;
+        if (!res.headersSent) {
+          res.writeHead(err.statusCode, {
+            "Content-Type": "application/json",
+            ...(closeAfterResponse ? { Connection: "close" } : {}),
+          });
+          res.end(
+            JSON.stringify({ error: err.errorCode, error_description: err.message }),
+            () => {
+              if (closeAfterResponse && !req.destroyed) req.destroy();
+            }
+          );
+        } else {
+          res.end();
+        }
+        return;
+      }
       console.error("HTTP error:", (err as Error).message);
       if (!res.headersSent) json(res, 500, { error: "internal_error" });
       else res.end();

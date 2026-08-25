@@ -1,8 +1,13 @@
 import { getRuntimeConfig } from "../../api/client.js";
 import { readTokens, isTokenExpired } from "../../auth/token-store.js";
+import { getRequestUserKey } from "../../auth/request-context.js";
 
 export async function handleGetConfig(): Promise<string> {
   const runtimeConfig = getRuntimeConfig();
+  const runtimeScope =
+    getRequestUserKey() === undefined
+      ? "process-local"
+      : "authenticated-user scoped";
   const tokens = readTokens();
 
   const lines: string[] = ["## Procore MCP Server Configuration\n"];
@@ -19,14 +24,15 @@ export async function handleGetConfig(): Promise<string> {
     lines.push("Auth: Not authenticated. Run `npm run auth` to set up.");
   }
 
-  // Company ID. Keep the source explicit: runtime values are process-local
-  // overrides, while PROCORE_COMPANY_ID is only the environment fallback.
+  // Company ID. Keep the source explicit: runtime values are scoped to the
+  // current authenticated user in hosted mode, while PROCORE_COMPANY_ID is
+  // only the environment fallback.
   const runtimeCompanyId = runtimeConfig.company_id;
   const environmentCompanyId = process.env.PROCORE_COMPANY_ID;
   const companyId = runtimeCompanyId ?? environmentCompanyId;
   lines.push(`\nDefault Company ID: ${companyId || "Not set"}`);
   if (runtimeCompanyId !== undefined) {
-    lines.push("Company ID source: runtime override (process-local)");
+    lines.push(`Company ID source: runtime override (${runtimeScope})`);
   } else if (environmentCompanyId) {
     lines.push("Company ID source: PROCORE_COMPANY_ID environment variable");
   }
@@ -34,7 +40,7 @@ export async function handleGetConfig(): Promise<string> {
   // Runtime overrides
   if (runtimeConfig.project_id !== undefined) {
     lines.push(`Default Project ID: ${runtimeConfig.project_id}`);
-    lines.push("Project ID source: runtime override (process-local)");
+    lines.push(`Project ID source: runtime override (${runtimeScope})`);
   }
 
   // Additional runtime config
@@ -48,9 +54,13 @@ export async function handleGetConfig(): Promise<string> {
     }
   }
 
+  const runtimeLifetime =
+    getRequestUserKey() === undefined
+      ? "this server process"
+      : "this authenticated user's requests in this server process";
   lines.push(
     "\nUse procore_set_config to change runtime settings (company_id, project_id). " +
-      "Runtime settings apply only to this server process and are lost on restart."
+      `Runtime settings apply only to ${runtimeLifetime} and are lost on restart.`
   );
 
   return lines.join("\n");

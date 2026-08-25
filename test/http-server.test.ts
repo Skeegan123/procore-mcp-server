@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { AddressInfo } from "node:net";
-import { createServer as createProbeServer } from "node:http";
+import { createServer as createProbeServer, request as httpRequest } from "node:http";
 
 process.env.PROCORE_MCP_TOKEN_SECRET = "test-secret-for-http-server";
 process.env.PROCORE_OAUTH_REDIRECT_URIS = "https://client.example/callback";
@@ -9,6 +9,8 @@ delete process.env.PROCORE_ALLOW_ANY_REDIRECT;
 process.env.PROCORE_CLIENT_ID = "test-client-id";
 process.env.PROCORE_CLIENT_SECRET = "test-client-secret";
 process.env.PROCORE_READ_ONLY = "";
+process.env.PROCORE_MCP_MAX_BODY_BYTES = "65536";
+process.env.PROCORE_MCP_BODY_TIMEOUT_MS = "250";
 
 let server: ReturnType<typeof import("../src/http-server.js").startHttpServer>;
 let base = "";
@@ -139,4 +141,62 @@ test("/oauth/authorize rejects redirect URIs that are not allowlisted", async ()
 test("/oauth/token requires POST", async () => {
   const res = await fetch(`${base}/oauth/token`);
   assert.equal(res.status, 405);
+});
+
+test("/oauth/token rejects a declared oversized body with 413", async () => {
+  const body = "x".repeat(65_537);
+  const res = await fetch(`${base}/oauth/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Length": String(Buffer.byteLength(body)),
+    },
+    body,
+  });
+  assert.equal(res.status, 413);
+  const responseBody = (await res.json()) as { error: string };
+  assert.equal(responseBody.error, "payload_too_large");
+});
+
+test("/oauth/token rejects an oversized chunked body with 413", async () => {
+  const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const request = httpRequest(
+      `${base}/oauth/token`,
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () =>
+          resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString("utf8") })
+        );
+      }
+    );
+    request.on("error", reject);
+    request.write("x".repeat(65_536));
+    request.end("x");
+  });
+
+  assert.equal(response.status, 413);
+  assert.equal((JSON.parse(response.body) as { error: string }).error, "payload_too_large");
+});
+
+test("/oauth/token returns 408 when the body stalls", async () => {
+  const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const request = httpRequest(
+      `${base}/oauth/token`,
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () =>
+          resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString("utf8") })
+        );
+      }
+    );
+    request.on("error", () => undefined);
+    request.flushHeaders();
+  });
+
+  assert.equal(response.status, 408);
+  assert.equal((JSON.parse(response.body) as { error: string }).error, "request_timeout");
 });
