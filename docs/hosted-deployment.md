@@ -51,14 +51,51 @@ Key properties to remember:
 
 - Node.js 20+
 - A **sandbox** Procore app in the [Developer Portal](https://developers.procore.com/)
-  with `PROCORE_CLIENT_ID` / `PROCORE_CLIENT_SECRET` (use sandbox while testing;
-  see the repo guidelines)
-- In that app's settings, add this redirect URI:
-  `http://localhost/oauth/callback`
+  (use sandbox while testing; see the repo guidelines)
 
-> Why port 80: Procore only accepts plain `http://localhost` (no HTTPS, no custom
-> ports) as a non-production redirect URI, so the local server must listen on port 80.
-> macOS does not require special permissions for this.
+#### Getting credentials from the Developer Portal (the confusing part, explained)
+
+The new App Management portal gates OAuth credentials behind app configuration.
+What you'll see and what to do about it:
+
+- The **OAuth Credentials** section shows empty Client ID / Secret fields with a
+  banner: *"Promote Your App to View OAuth Credentials — your app must include a
+  data connector component and be promoted to the production environment."*
+  Credentials are not issued for apps that have no components.
+- The **Sandbox OAuth Credentials** section may show only a **Sandbox URL** field
+  (plus an Update button) and no credentials. A sandbox URL alone does not
+  generate credentials.
+
+The unblock sequence, in order:
+
+1. **Fill in the Sandbox URL** in the sandbox section (your sandbox company URL,
+   e.g. `https://sandbox.procore.com/<company_id>/company/home`) and click
+   **Update**. If credentials appear now, you're done — skip the rest.
+2. **Add a Data Connector component**: Configuration Builder → Data Connector
+   Components → Add Component → select **User Level Authentication** (users sign
+   in as themselves — our model; skip Service Account Authentication, that's for
+   server-to-server crawlers). Save the component.
+3. **Create an app version** so the component is actually in a version
+   (Versions → create new). Check OAuth Credentials again.
+4. **Promote the version to production** (Versions → Promote) if credentials
+   still haven't appeared. Production credentials are revealed at promotion time
+   and **the client secret is shown only once — save it immediately**. You'll
+   need production credentials for real hosting anyway; until then keep testing
+   with `PROCORE_ENV=sandbox` if sandbox credentials were issued, or test
+   carefully against production in read-only mode.
+
+Register `http://localhost/oauth/callback` as a redirect URI wherever the portal
+accepts one (`http://localhost` is the only non-HTTPS URI Procore allows, which is
+why the local server listens on port 80; macOS doesn't require special
+permissions for this).
+
+The number in the sandbox URL is your sandbox **company ID** — keep it handy as
+`PROCORE_COMPANY_ID` so `procore_api_call` can default the `Procore-Company-Id`
+header.
+
+> If credentials still don't appear after step 4, contact Procore developer
+> support — the portal has changed several times and account-level provisioning
+> issues (e.g. the Developer Sandbox itself) do happen.
 
 ### 2.2 Configure
 
@@ -107,6 +144,15 @@ Read-only mode is ON — every served tool call is a GET.
 
 Leave it running in this terminal. Check `http://localhost/healthz` in a browser — it
 should return JSON like `{"ok":true,"read_only":true}`.
+
+> **Port gotcha:** the server's default port is 8787, but the local Procore OAuth
+> flow only works on port 80 — Procore accepts plain `http://localhost` (no port)
+> as a redirect URI, and the redirect URI registered in the portal must match the
+> one the server sends during token exchange character-for-character. Always start
+> with `PORT=80 npm run start:http` and keep `PROCORE_MCP_BASE_URL=http://localhost`.
+> If the startup log says "listening on port 8787", the PORT variable didn't take.
+> (You can experiment with `http://localhost:8787/oauth/callback` if Procore's
+> portal accepts it, but the portless setup is the known-good path.)
 
 ### 2.5 Walk the sign-in flow manually
 

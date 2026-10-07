@@ -143,8 +143,11 @@ export function registerTools(server: McpServer): void {
           "Resolve the exact path and parameters with procore_get_endpoint_details first. " +
           "Handles OAuth from the saved tokens, substitutes {placeholders} from path_params, and rewrites " +
           "double underscores in query keys into brackets (filters__status becomes filters[status]). " +
-          "company_id and project_id fall back to whatever procore_set_config holds when the path needs " +
-          "them and you omit them. " +
+          "The Procore-Company-Id header comes from the server's configured company, so in a " +
+          "single-company deployment you can simply omit company_id; pass it explicitly only when " +
+          "deliberately targeting another company. Always pass project_id explicitly in path_params " +
+          "on project-scoped calls rather than relying on stored defaults; to compare across projects, " +
+          "just pass different project_id values across calls. " +
           "Returns the parsed JSON response together with pagination and rate-limit metadata. Failures " +
           "come back as an error payload carrying the HTTP status — commonly 401 when the token has " +
           "expired, 403 without tool permission, 404 when an id does not resolve, and 429 when the rate " +
@@ -158,8 +161,11 @@ export function registerTools(server: McpServer): void {
           "overwrite fields, so confirm the target id before calling and prefer a GET to verify it exists. " +
           "Handles OAuth from the saved tokens, substitutes {placeholders} from path_params, and rewrites " +
           "double underscores in query keys into brackets (filters__status becomes filters[status]). " +
-          "company_id and project_id fall back to whatever procore_set_config holds when the path needs " +
-          "them and you omit them. " +
+          "The Procore-Company-Id header comes from the server's configured company, so in a " +
+          "single-company deployment you can simply omit company_id; pass it explicitly only when " +
+          "deliberately targeting another company. Always pass project_id explicitly in path_params " +
+          "on project-scoped calls rather than relying on stored defaults; to compare across projects, " +
+          "just pass different project_id values across calls. " +
           "Returns the parsed JSON response together with pagination and rate-limit metadata. Failures " +
           "come back as an error payload carrying the HTTP status — commonly 401 when the token has " +
           "expired, 403 without tool permission, 404 when an id does not resolve, 422 when the body fails " +
@@ -180,12 +186,12 @@ export function registerTools(server: McpServer): void {
                 .describe(
                   "API path with placeholders left intact, e.g. '/rest/v1.0/projects/{project_id}/rfis'. Supply the values via path_params rather than interpolating them here."
                 ),
-              path_params: z
-                .record(z.string(), z.string())
-                .optional()
-                .describe(
-                  "Values substituted into the path's {placeholders}, e.g. { project_id: '12345' }. Required whenever the path contains a placeholder that procore_set_config does not already supply."
-                ),
+        path_params: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            "Values substituted into the path's {placeholders}, e.g. { project_id: '12345' }. Always pass project_id explicitly on project-scoped paths rather than relying on stored defaults."
+          ),
               query_params: z
                 .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
                 .optional()
@@ -301,12 +307,13 @@ export function registerTools(server: McpServer): void {
     {
       title: "Set Runtime Configuration Value",
       description:
-        "Sets the default company_id or project_id that later procore_api_call requests use when the " +
-        "path needs one and you omit it. A value in path_params wins for that URL placeholder, and a " +
-        "per-call company_id wins for that call's header and company placeholder. The runtime company " +
-        "value also overrides PROCORE_COMPANY_ID for the Procore-Company-Id header. Use this to switch " +
-        "project context mid-session instead of restarting the server, then call procore_get_config to " +
-        "confirm what took effect. Only 'company_id' and 'project_id' are accepted; each must be a " +
+        "Sets a session-wide fallback id that procore_api_call uses only when a call omits it. " +
+        "Intended mainly for company_id, so the Procore-Company-Id header is right even when a call " +
+        "forgets it; a per-call company_id or path_params value always wins over what is stored here. " +
+        "Avoid storing a project_id default — pass project_id explicitly in path_params on each " +
+        "project-scoped call instead, so multi-project work stays unambiguous and a forgotten stored " +
+        "project can never silently scope calls to the wrong project. Only 'company_id' and " +
+        "'project_id' are accepted; each must be a " +
         "positive safe integer represented by complete decimal digits. Partial strings such as '12x', " +
         "zero, negatives, decimals, and values above 9007199254740991 are reported back as a message " +
         "rather than stored. " +
