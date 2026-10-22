@@ -49,7 +49,7 @@ Key properties to remember:
 
 ### 2.1 Prerequisites
 
-- Node.js 20+
+- Node.js 24.22.1 or a newer 24.x patch
 - A **sandbox** Procore app in the [Developer Portal](https://developers.procore.com/)
   (use sandbox while testing; see the repo guidelines)
 
@@ -280,7 +280,7 @@ services, and the recipe below is all there is to it.
 When ready, create a `Dockerfile` in the project root:
 
 ```dockerfile
-FROM node:20-slim
+FROM node:24.22.1-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

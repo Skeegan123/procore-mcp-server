@@ -19,7 +19,7 @@
   "type": "module",
   "main": "dist/src/index.js",
   "engines": {
-    "node": ">=20"
+    "node": "^24.22.1"
   },
   "scripts": {
     "generate": "node --import tsx scripts/generate-catalog.ts && node --import tsx scripts/generate-tools-manifest.ts",
